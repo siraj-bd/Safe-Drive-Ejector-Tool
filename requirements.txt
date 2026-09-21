@@ -1,0 +1,5 @@
+# SafeEject Python Requirements
+# Core engine & CLI require standard library only (0 external dependencies).
+# For GUI System Tray (on Windows or macOS if running tray via python):
+pystray>=0.19.5
+pillow>=10.0.0

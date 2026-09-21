@@ -1,0 +1,527 @@
+"""
+Command Line Interface (CLI) for SafeEject.
+Supports rich terminal formatting, command actions, and configuration management.
+"""
+
+import argparse
+import json
+import logging
+import sys
+from typing import List
+
+from core.config import SafeEjectConfig, StateManager
+from core.engine import SafeEjectEngine
+from core.models import DriveInfo, ProcessLockInfo
+
+
+def setup_logger(level_name: str = "INFO"):
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+def print_table(headers: List[str], rows: List[List[str]]):
+    """Simple clean ASCII table printer without external dependencies."""
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < len(col_widths):
+                col_widths[i] = max(col_widths[i], len(str(cell)))
+
+    header_line = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    separator = "-+-".join("-" * col_widths[i] for i in range(len(headers)))
+
+    print(header_line)
+    print(separator)
+    for row in rows:
+        line = " | ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row))
+        print(line)
+
+
+def cmd_list(engine: SafeEjectEngine, args):
+    """List connected drives."""
+    all_drives = engine.adapter.get_drives()
+    if args.all:
+        drives = all_drives
+    else:
+        drives = [d for d in all_drives if d.is_external and not d.is_virtual]
+
+    if not drives:
+        print("\nNo external physical drives detected.")
+        if not args.all:
+            print("Tip: Use 'safe-eject list --all' to inspect internal and virtual disks.\n")
+        return
+
+    print(f"\nConnected Disks ({'All Disks' if args.all else 'External Physical Only'}):")
+    print("=" * 80)
+
+    rows = []
+    for d in drives:
+        status = "EXTERNAL" if d.is_external else "INTERNAL"
+        if d.is_virtual:
+            status += " (Virtual)"
+
+        mounted_vols = [v for v in d.volumes if v.is_mounted]
+        vol_desc = ", ".join(f"'{v.name}' ({v.mount_point})" for v in mounted_vols) if mounted_vols else "(None mounted)"
+
+        rows.append([
+            d.id,
+            d.name,
+            d.human_size,
+            d.bus_protocol,
+            status,
+            vol_desc,
+        ])
+
+    print_table(
+        ["Disk ID", "Model/Name", "Size", "Bus", "Type", "Mounted Volumes"],
+        rows,
+    )
+    print()
+
+    # If verbose, check for blocking processes on mounted volumes
+    if args.check_locks:
+        print("Checking for active file locks on mounted external volumes...")
+        found_any = False
+        for d in drives:
+            for v in d.volumes:
+                if v.mount_point:
+                    locks = engine.adapter.get_blocking_processes(v.mount_point)
+                    if locks:
+                        found_any = True
+                        print(f" -> Volume '{v.name}' ({v.mount_point}) is held open by {len(locks)} process(es):")
+                        for lock in locks:
+                            print(f"      PID {lock.pid} ({lock.process_name}): {lock.file_path}")
+        if not found_any:
+            print(" -> All mounted volumes are clean (no active file locks detected).\n")
+        else:
+            print()
+
+
+def cmd_eject_all(engine: SafeEjectEngine, args):
+    """Eject all external physical drives."""
+    ext_drives = engine.get_external_drives()
+    if not ext_drives:
+        print("\nNo external physical drives are currently connected.\n")
+        return
+
+    print(f"\nFound {len(ext_drives)} external drive(s) to eject:")
+    for d in ext_drives:
+        vols = [v.name for v in d.volumes if v.is_mounted]
+        vol_str = f" [Volumes: {', '.join(vols)}]" if vols else ""
+        print(f"  • {d.id} - {d.name} ({d.human_size}){vol_str}")
+
+    if args.dry_run:
+        print("\n[Dry Run] No drives were ejected.\n")
+        return
+
+    print("\nSafely unmounting and ejecting...")
+    results = engine.eject_all_external(manual=True)
+
+    success_all = True
+    for res in results:
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.target}: {res.message}")
+        if not res.success:
+            success_all = False
+            if res.blocking_processes:
+                print(f"    Blocking processes ({len(res.blocking_processes)}):")
+                for p in res.blocking_processes:
+                    print(f"      - {p}")
+
+    print()
+    if success_all:
+        print("All external disks ejected safely! You may now safely unplug cables.\n")
+    else:
+        print("Some drives could not be ejected. Check open files or apps locking the drive.\n")
+
+
+def cmd_eject_single(engine: SafeEjectEngine, args):
+    """Eject a specific drive or volume."""
+    target = args.target
+    print(f"\nEjecting '{target}'...")
+    res = engine.eject_single(target)
+    icon = "✓" if res.success else "✗"
+    print(f" {icon} {res.message}\n")
+    if res.blocking_processes:
+        print(f"Blocking processes ({len(res.blocking_processes)}):")
+        for p in res.blocking_processes:
+            print(f"  - {p}")
+        print()
+
+
+def cmd_remount_all(engine: SafeEjectEngine, args):
+    """Remount previously ejected drives."""
+    state = StateManager.load_ejected_drives()
+    drive_ids = state.get("drive_ids", [])
+    if not drive_ids:
+        print("\nNo recorded ejected drives found in state. Remounting all connected external drives...")
+        ext_drives = engine.get_external_drives()
+        for d in ext_drives:
+            res = engine.adapter.mount_drive(d.id)
+            icon = "✓" if res.success else "✗"
+            print(f" {icon} {d.id}: {res.message}")
+        print()
+        return
+
+    print(f"\nRemounting {len(drive_ids)} previously ejected drive(s)...")
+    results = engine.remount_all_ejected()
+    for res in results:
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.target}: {res.message}")
+    print()
+
+
+def cmd_remount_single(engine: SafeEjectEngine, args):
+    """Remount a single drive or volume."""
+    target = args.target
+    print(f"\nRemounting '{target}'...")
+    res = engine.remount_single(target)
+    icon = "✓" if res.success else "✗"
+    print(f" {icon} {res.message}\n")
+
+
+def cmd_daemon(engine: SafeEjectEngine, args):
+    """Run the sleep/wake watcher daemon in foreground."""
+    print("\n" + "=" * 60)
+    print(" SafeEject Power Monitoring Daemon Running")
+    print("=" * 60)
+    print(f" - Eject on sleep:       {engine.config.eject_on_sleep}")
+    print(f" - Remount on wake:      {engine.config.remount_on_wake}")
+    print(f" - Show notifications:   {engine.config.show_notifications}")
+    print(f" - Excluded volumes:     {engine.config.excluded_volumes or 'None'}")
+    print(" Press Ctrl+C to stop.\n")
+
+    try:
+        engine.run_daemon()
+    except KeyboardInterrupt:
+        print("\nSafeEject daemon stopped by user.")
+
+
+def cmd_eject_now(engine: SafeEjectEngine, args):
+    """Eject Now Logic: immediately safely unmounts and ejects all managed drives."""
+    managed = engine.get_managed_drives()
+    if not managed:
+        print("\nNo managed external drives are currently connected.\n")
+        return
+
+    print(f"\n[Eject Now] Ejecting {len(managed)} managed drive(s):")
+    for d in managed:
+        vols = [v.name for v in d.volumes if v.is_mounted]
+        vol_str = f" [Volumes: {', '.join(vols)}]" if vols else ""
+        print(f"  • {d.id} - {d.name} ({d.human_size}){vol_str}")
+
+    results = engine.eject_now()
+    print("\nResults:")
+    for res in results:
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.target}: {res.message}")
+    print()
+
+
+def cmd_timer(engine: SafeEjectEngine, args):
+    """Configure sleep timer preset."""
+    if not args.preset:
+        print(f"\nCurrent Sleep Timer: {engine.config.sleep_timer_label} ({engine.config.sleep_timer_seconds}s)")
+        print("Available presets: 2m, 5m, 10m, 15m, 30m, 1h, 2h, never\n")
+        return
+
+    ok = engine.set_timer_preset(args.preset)
+    if ok:
+        print(f"Sleep Timer updated to: {engine.config.sleep_timer_label}\n")
+    else:
+        print(f"Invalid preset '{args.preset}'. Choose from: 2m, 5m, 10m, 15m, 30m, 1h, 2h, never\n")
+
+
+def cmd_manage(engine: SafeEjectEngine, args):
+    """Toggle persistent management of an external drive (up to 6 max)."""
+    if not args.target:
+        managed = engine.get_managed_drives()
+        print(f"\nManaged Drives ({len(managed)}/6):")
+        for d in managed:
+            print(f"  • [{d.id}] {d.name} (UUID: {d.primary_uuid})")
+        print("\nTo toggle a drive: ./main.py manage <disk_id_or_uuid>\n")
+        return
+
+    is_managed, msg = engine.toggle_manage_drive(args.target)
+    print(f"\n{msg}\n")
+
+
+def cmd_wake_mode(engine: SafeEjectEngine, args):
+    """Set or inspect Wake Mode (touch: auto-active on Mac touch, manual: stay asleep until manual mount)."""
+    if not args.mode:
+        mode_desc = "Auto-Active on Mac Touch" if engine.config.wake_mode == "touch" else "Manual (Stay Asleep until Manual Mount)"
+        print(f"\nCurrent Wake Mode: {mode_desc} ('{engine.config.wake_mode}')")
+        print("Options: ./main.py wake-mode touch  OR  ./main.py wake-mode manual\n")
+        return
+
+    ok = engine.set_wake_mode(args.mode)
+    if ok:
+        mode_desc = "Auto-Active on Mac Touch" if engine.config.wake_mode == "touch" else "Stay Asleep until Manual Mount"
+        print(f"\nWake Mode updated to: {mode_desc}\n")
+    else:
+        print(f"Invalid mode '{args.mode}'. Choose from: touch, manual\n")
+
+
+def cmd_select_sleep(engine: SafeEjectEngine, args):
+    """Choose which individual SSD goes to sleep when Mac is idle."""
+    if not args.target:
+        selected = engine.get_sleep_selected_drives()
+        print(f"\nSSDs Chosen for Auto-Sleep ({len(selected)}):")
+        for d in selected:
+            print(f"  • [{d.id}] {d.name} (UUID: {d.primary_uuid})")
+        print("\nTo toggle an SSD: ./main.py select-sleep <disk_id_or_uuid>\n")
+        return
+
+    is_sel, msg = engine.toggle_sleep_selection(args.target)
+    print(f"\n{msg}\n")
+
+
+def cmd_eject_and_sleep(engine: SafeEjectEngine, args):
+    """Eject external drives and sleep system immediately."""
+    print("\nEjecting external drives and putting system to sleep...")
+    engine.eject_and_sleep()
+
+
+def cmd_sleep_system(engine: SafeEjectEngine, args):
+    """Put system to sleep."""
+    print("\nPutting system to sleep...")
+    engine.sleep_system()
+
+
+def cmd_open(engine: SafeEjectEngine, args):
+    """Open a mounted volume in Finder or Explorer."""
+    ok = engine.open_volume(args.target)
+    if ok:
+        print(f"Opened '{args.target}' in file manager.")
+    else:
+        print(f"Could not open '{args.target}'. Is it mounted?")
+
+
+def cmd_mount_and_open(engine: SafeEjectEngine, args):
+    """Mount volume and open in Finder or Explorer."""
+    print(f"Mounting and opening '{args.target}'...")
+    ok = engine.mount_and_open(args.target)
+    if ok:
+        print(f"Mounted and opened '{args.target}'.")
+    else:
+        print(f"Failed to mount or open '{args.target}'.")
+
+
+def cmd_mount_and_open_all(engine: SafeEjectEngine, args):
+    """Mount all external drives and open in Finder or Explorer."""
+    print("Mounting and opening all external drives...")
+    opened = engine.mount_and_open_all()
+    print(f"Mounted and opened {opened} volume(s).")
+
+
+def cmd_update_config_json(engine: SafeEjectEngine, args):
+    """Update configuration from JSON string."""
+    try:
+        data = json.loads(args.json_data)
+        engine.config.update_settings(data)
+        print("Config updated successfully.")
+    except Exception as e:
+        print(f"Failed to update config: {e}")
+
+
+def cmd_config(engine: SafeEjectEngine, args):
+    """Manage configuration settings."""
+    if args.action == "show":
+        print("\nCurrent Configuration:")
+        print(json.dumps(engine.config.__dict__, indent=4))
+        print()
+    elif args.action == "set":
+        if not args.key or args.value is None:
+            print("Error: Specify both key and value to set (e.g. safe-eject config set eject_on_sleep true)")
+            return
+        key = args.key
+        val = args.value
+        if val.lower() in ("true", "1", "yes"):
+            val_parsed = True
+        elif val.lower() in ("false", "0", "no"):
+            val_parsed = False
+        elif val.isdigit():
+            val_parsed = int(val)
+        else:
+            val_parsed = val
+
+        if hasattr(engine.config, key):
+            setattr(engine.config, key, val_parsed)
+            engine.config.save()
+            print(f"Config updated: {key} = {val_parsed}")
+        else:
+            print(f"Unknown config key '{key}'. Available keys: {list(engine.config.__dict__.keys())}")
+    elif args.action == "exclude-add":
+        if not args.key:
+            print("Error: Specify volume name to exclude (e.g. safe-eject config exclude-add MyDrive)")
+            return
+        if args.key not in engine.config.excluded_volumes:
+            engine.config.excluded_volumes.append(args.key)
+            engine.config.save()
+            print(f"Volume '{args.key}' added to exclusion list.")
+        else:
+            print(f"Volume '{args.key}' is already in exclusion list.")
+    elif args.action == "exclude-remove":
+        if args.key in engine.config.excluded_volumes:
+            engine.config.excluded_volumes.remove(args.key)
+            engine.config.save()
+            print(f"Volume '{args.key}' removed from exclusion list.")
+        else:
+            print(f"Volume '{args.key}' not found in exclusion list.")
+
+
+def cmd_test_notify(engine: SafeEjectEngine, args):
+    """Send a test desktop notification."""
+    print("Sending test desktop notification...")
+    engine.adapter.show_notification("SafeEject", "This is a test notification from SafeEject!")
+    print("Notification sent successfully.\n")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="safe-eject",
+        description="SafeEject: macOS & Windows External Disk Safe Ejector & Auto-Remounter",
+    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+
+    subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
+
+    # list
+    p_list = subparsers.add_parser("list", aliases=["ls"], help="List connected drives and volumes")
+    p_list.add_argument("--all", "-a", action="store_true", help="Show all drives (including internal & virtual)")
+    p_list.add_argument("--check-locks", "-l", action="store_true", help="Scan for active file locks on mounted volumes")
+
+    # eject-now
+    subparsers.add_parser("eject-now", help="Immediately safely eject all managed external drives")
+
+    # eject-all
+    p_eject_all = subparsers.add_parser("eject-all", help="Safely eject all external physical drives")
+    p_eject_all.add_argument("--dry-run", action="store_true", help="Simulate without actually unmounting")
+
+    # eject <target>
+    p_eject = subparsers.add_parser("eject", help="Eject a specific disk or volume")
+    p_eject.add_argument("target", help="Disk identifier (e.g. disk7) or volume name/mountpoint")
+
+    # remount-all
+    subparsers.add_parser("remount-all", help="Remount previously ejected drives")
+
+    # remount <target>
+    p_remount = subparsers.add_parser("remount", help="Remount a specific drive or volume")
+    p_remount.add_argument("target", help="Disk identifier or volume name")
+
+    # timer <preset>
+    p_timer = subparsers.add_parser("timer", help="Set idle sleep timer preset (2m, 5m, 10m, 15m, 30m, 1h, 2h, never)")
+    p_timer.add_argument("preset", nargs="?", help="Preset value: 2m, 5m, 10m, 15m, 30m, 1h, 2h, never")
+
+    # manage <target>
+    p_manage = subparsers.add_parser("manage", help="Toggle persistent drive management (up to 6 max)")
+    p_manage.add_argument("target", nargs="?", help="Disk identifier or UUID to toggle")
+
+    # wake-mode <touch|manual>
+    p_wake_mode = subparsers.add_parser("wake-mode", help="Set Wake Mode: touch (auto active on Mac touch) or manual (stay asleep)")
+    p_wake_mode.add_argument("mode", nargs="?", choices=["touch", "manual"], help="touch or manual")
+
+    # select-sleep <target>
+    p_select_sleep = subparsers.add_parser("select-sleep", help="Individually choose which SSD sleeps on idle")
+    p_select_sleep.add_argument("target", nargs="?", help="Disk identifier or UUID to toggle")
+
+    # daemon
+    subparsers.add_parser("daemon", help="Run the sleep/wake listener daemon in foreground")
+
+    # status
+    subparsers.add_parser("status", help="Show current daemon configuration and drive status")
+
+    # test-notify
+    subparsers.add_parser("test-notify", help="Send a test desktop notification")
+
+    # eject-and-sleep
+    subparsers.add_parser("eject-and-sleep", help="Eject external drives and sleep system immediately")
+
+    # sleep-system
+    subparsers.add_parser("sleep-system", help="Put the system to sleep")
+
+    # open <target>
+    p_open = subparsers.add_parser("open", help="Open a mounted volume in Finder or Explorer")
+    p_open.add_argument("target", help="Volume name or mount point")
+
+    # mount-and-open <target>
+    p_m_open = subparsers.add_parser("mount-and-open", help="Mount volume and open in Finder or Explorer")
+    p_m_open.add_argument("target", help="Volume name or device identifier")
+
+    # mount-and-open-all
+    subparsers.add_parser("mount-and-open-all", help="Mount all external drives and open them in Finder or Explorer")
+
+    # update-config-json <json_data>
+    p_update_json = subparsers.add_parser("update-config-json", help="Update config with JSON string")
+    p_update_json.add_argument("json_data", help="JSON string with key-value settings")
+
+    # config
+    p_config = subparsers.add_parser("config", help="View or modify SafeEject settings")
+    p_config.add_argument("action", choices=["show", "set", "exclude-add", "exclude-remove"], help="Config action")
+    p_config.add_argument("key", nargs="?", help="Setting key or volume name")
+    p_config.add_argument("value", nargs="?", help="Setting value")
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+
+    log_level = "DEBUG" if args.verbose else "INFO"
+    setup_logger(log_level)
+
+    engine = SafeEjectEngine()
+
+    if args.command in ("list", "ls"):
+        cmd_list(engine, args)
+    elif args.command == "eject-now":
+        cmd_eject_now(engine, args)
+    elif args.command == "eject-all":
+        cmd_eject_all(engine, args)
+    elif args.command == "eject":
+        cmd_eject_single(engine, args)
+    elif args.command == "remount-all":
+        cmd_remount_all(engine, args)
+    elif args.command == "remount":
+        cmd_remount_single(engine, args)
+    elif args.command == "timer":
+        cmd_timer(engine, args)
+    elif args.command == "manage":
+        cmd_manage(engine, args)
+    elif args.command == "wake-mode":
+        cmd_wake_mode(engine, args)
+    elif args.command == "select-sleep":
+        cmd_select_sleep(engine, args)
+    elif args.command == "eject-and-sleep":
+        cmd_eject_and_sleep(engine, args)
+    elif args.command == "sleep-system":
+        cmd_sleep_system(engine, args)
+    elif args.command == "open":
+        cmd_open(engine, args)
+    elif args.command == "mount-and-open":
+        cmd_mount_and_open(engine, args)
+    elif args.command == "mount-and-open-all":
+        cmd_mount_and_open_all(engine, args)
+    elif args.command == "update-config-json":
+        cmd_update_config_json(engine, args)
+    elif args.command == "daemon":
+        cmd_daemon(engine, args)
+    elif args.command == "status":
+        print(f"\n{engine.get_bottom_status()}\n")
+    elif args.command == "config":
+        cmd_config(engine, args)
+    elif args.command == "test-notify":
+        cmd_test_notify(engine, args)
+
+
+if __name__ == "__main__":
+    main()

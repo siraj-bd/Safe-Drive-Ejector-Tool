@@ -1,0 +1,67 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Swift & Xcode Build Artifacts
+.build/
+.swiftpm/
+xcuserdata/
+DerivedData/
+*.swiftdoc
+*.swiftmodule
+*.swiftsourceinfo
+*.dSYM/
+
+# Binaries (Local builds)
+bin/SafeEjectMenuBar
+bin/*.o
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+.tmp_home/
+
+# Testing & Cache
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs & Temporary Files
+*.log
+/tmp/
+scratch/
