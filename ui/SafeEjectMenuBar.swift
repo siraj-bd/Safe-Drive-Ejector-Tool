@@ -22,11 +22,19 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     var livePollingTimer: Timer?
     var isSyncingState = false
 
+    var backgroundIdleTimer: Timer?
+    var configuredTimerSeconds: Double = 300.0
+    var autoAwakeEnabled: Bool = true
+    var beforeSleepEnabled: Bool = true
+    var isSleepingDueToIdle: Bool = false
+    var lastKnownIdleSeconds: Double = 0.0
+
     override init() {
         super.init()
         locatePaths()
         setupPanel()
         setupStatusItem()
+        setupPowerAndIdleMonitoring()
     }
 
     func locatePaths() {
@@ -204,6 +212,85 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         img.unlockFocus()
         img.isTemplate = false
         return img
+    }
+
+    func setupPowerAndIdleMonitoring() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        refreshConfig()
+
+        backgroundIdleTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.checkIdleState()
+        }
+    }
+
+    func refreshConfig() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let status = self.queryStatusJSON()
+            if let config = status["config"] as? [String: Any] {
+                let sec = (config["sleep_timer_seconds"] as? NSNumber)?.doubleValue ?? 300.0
+                let awake = (config["remount_on_wake"] as? Bool) ?? true
+                let sleepEject = (config["eject_on_sleep"] as? Bool) ?? true
+                DispatchQueue.main.async {
+                    self.configuredTimerSeconds = sec
+                    self.autoAwakeEnabled = awake
+                    self.beforeSleepEnabled = sleepEject
+                }
+            }
+        }
+    }
+
+    @objc func handleSystemSleep(_ notification: Notification) {
+        NSLog("SafeEjectMenuBar: macOS System will sleep (beforeSleepEnabled: \(beforeSleepEnabled))")
+        if beforeSleepEnabled {
+            runCLICommand(["eject-now"])
+        }
+    }
+
+    @objc func handleSystemWake(_ notification: Notification) {
+        NSLog("SafeEjectMenuBar: macOS System did wake (autoAwakeEnabled: \(autoAwakeEnabled))")
+        if autoAwakeEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runCLICommand(["remount-all"])
+            }
+        }
+    }
+
+    func checkIdleState() {
+        let idleSec = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        lastKnownIdleSeconds = idleSec
+
+        // Touch Wake: Mac was idle & drives put to sleep, now touched Mac (< 3.0s idle)
+        if idleSec < 3.0 {
+            if isSleepingDueToIdle {
+                isSleepingDueToIdle = false
+                NSLog("SafeEjectMenuBar: User touch detected (<3s). Auto-awakening drives...")
+                if autoAwakeEnabled {
+                    runCLICommand(["remount-all"])
+                }
+            }
+        }
+
+        // Idle Sleep: Inactivity reached or passed configured timer
+        if configuredTimerSeconds > 0 && idleSec >= configuredTimerSeconds {
+            if !isSleepingDueToIdle {
+                isSleepingDueToIdle = true
+                NSLog("SafeEjectMenuBar: Mac idle for \(Int(idleSec))s (>= \(Int(configuredTimerSeconds))s). Triggering idle-sleep...")
+                runCLICommand(["idle-sleep"])
+            }
+        }
     }
 
     @objc func togglePanel(_ sender: AnyObject?) {
@@ -393,7 +480,42 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             }
         case "timer":
             if let preset = body["preset"] as? String {
+                var sec: Double = 300.0
+                switch preset {
+                case "2m": sec = 120.0
+                case "5m": sec = 300.0
+                case "10m": sec = 600.0
+                case "15m": sec = 900.0
+                case "30m": sec = 1800.0
+                case "1h": sec = 3600.0
+                case "2h": sec = 7200.0
+                case "never": sec = 0.0
+                default: sec = 300.0
+                }
+                self.configuredTimerSeconds = sec
+                self.isSleepingDueToIdle = false
+                NSLog("SafeEjectMenuBar: Idle sleep timer changed to \(preset) (\(Int(sec))s)")
                 runCLICommand(["timer", preset])
+            }
+        case "checkboxToggle":
+            if let id = body["id"] as? String, let checked = body["checked"] as? Bool {
+                if id == "autoAwakeCheck" {
+                    self.autoAwakeEnabled = checked
+                    runCLICommand(["config", "set", "remount_on_wake", checked ? "true" : "false"])
+                } else if id == "beforeSleepCheck" {
+                    self.beforeSleepEnabled = checked
+                    runCLICommand(["config", "set", "eject_on_sleep", checked ? "true" : "false"])
+                } else if id == "startAtLoginCheck" {
+                    runCLICommand(["config", "set", "start_at_login", checked ? "true" : "false"])
+                } else if id == "beforeLogoutCheck" {
+                    runCLICommand(["config", "set", "eject_before_logout", checked ? "true" : "false"])
+                } else if id == "ejectedDiskCheck" {
+                    if checked {
+                        runCLICommand(["eject-now"])
+                    } else {
+                        runCLICommand(["remount-all"])
+                    }
+                }
             }
         case "openURL":
             if let urlStr = body["url"] as? String, let url = URL(string: urlStr) {

@@ -990,32 +990,6 @@
       margin-left: 1px;
     }
 
-    /* Count Lines (IIII) showing 1, 2, 3, 4 bars count-wise */
-    .count-bars {
-      display: inline-flex;
-      align-items: center;
-      gap: 1.5px;
-      height: 9px;
-      margin: 0 3px;
-      padding: 0 1px;
-      flex-shrink: 0;
-    }
-
-    .count-bars .bar {
-      width: 1.5px;
-      height: 7.5px;
-      background: #38bdf8;
-      border-radius: 0.5px;
-      box-shadow: 0 0 3px rgba(56, 189, 248, 0.85);
-      display: block;
-    }
-
-    .count-bars[data-count="0"] .bar { display: none; }
-    .count-bars[data-count="1"] .bar:nth-child(n+2) { display: none; }
-    .count-bars[data-count="2"] .bar:nth-child(n+3) { display: none; }
-    .count-bars[data-count="3"] .bar:nth-child(n+4) { display: none; }
-    .count-bars[data-count="4"] .bar,
-    .count-bars[data-count="all"] .bar { display: block; }
 
     /* ==========================================================================
        3D RAISED CHROME TEXT WATERMARK (matching user image "GET STARTED")
@@ -1459,19 +1433,14 @@
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
           <span class="control-title">Ejected</span>
-          <span class="count-bars" id="diskCountBars" data-count="0" title="Selected disk count">
-            <span class="bar"></span>
-            <span class="bar"></span>
-            <span class="bar"></span>
-            <span class="bar"></span>
-          </span>
-          <select class="custom-select" id="ejectedDiskSelect" onchange="updateDiskCountBars(this.value)">
+          <select class="custom-select" id="ejectedDiskSelect" onchange="handleEjectedSelectChange(this.value)">
             <option value="0" selected>0</option>
             <option value="1">1</option>
             <option value="2">2</option>
             <option value="3">3</option>
             <option value="4">4</option>
-            <option value="all">All</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
           </select>
         </div>
       </div>
@@ -2014,13 +1983,6 @@
       }
     }
 
-    function updateDiskCountBars(val) {
-      const bars = document.getElementById("diskCountBars");
-      if (bars) {
-        bars.setAttribute("data-count", String(val).toLowerCase());
-      }
-    }
-
     function syncEjectedCount(overrideCount = null) {
       const select = document.getElementById("ejectedDiskSelect");
       const checkElem = document.getElementById("ejectedDiskCheck");
@@ -2036,19 +1998,15 @@
         }
       }
 
-      let val = "0";
-      if (actualCount === 0) {
-        val = "0";
-      } else if (currentDrives && currentDrives.length > 0 && actualCount >= currentDrives.length) {
-        val = "all";
-      } else if (actualCount >= 4) {
-        val = "4";
-      } else {
-        val = String(actualCount);
+      // Always display real integer count (e.g. 0, 1, 2, 3...)
+      const val = String(actualCount);
+      if (!select.querySelector(`option[value="${val}"]`)) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = val;
+        select.appendChild(opt);
       }
-
       select.value = val;
-      updateDiskCountBars(val);
 
       if (checkElem) {
         if (actualCount > 0) {
@@ -2056,6 +2014,12 @@
         } else {
           checkElem.classList.add("unchecked");
         }
+      }
+    }
+
+    function handleEjectedSelectChange(val) {
+      if (val === "0") {
+        postToHost({ action: "mount", target: "all" });
       }
     }
 
@@ -2187,7 +2151,35 @@
         syncEjectedCount();
       }
 
-      if (state.sleepTimer) {
+      if (state.config) {
+        const cfg = state.config;
+        const setCb = (id, val) => {
+          const el = document.getElementById(id);
+          if (el) {
+            if (val) el.classList.remove("unchecked");
+            else el.classList.add("unchecked");
+          }
+        };
+        setCb("autoAwakeCheck", cfg.remount_on_wake !== false);
+        setCb("startAtLoginCheck", cfg.start_at_login !== false);
+        setCb("beforeSleepCheck", cfg.eject_on_sleep !== false);
+        setCb("beforeLogoutCheck", cfg.eject_before_logout === true);
+
+        if (cfg.sleep_timer_seconds !== undefined) {
+          const timerSelect = document.getElementById("sleepTimerSelect");
+          if (timerSelect) {
+            const sec = cfg.sleep_timer_seconds;
+            if (sec <= 0) timerSelect.value = "never";
+            else if (sec === 120) timerSelect.value = "2m";
+            else if (sec === 300) timerSelect.value = "5m";
+            else if (sec === 600) timerSelect.value = "10m";
+            else if (sec === 900) timerSelect.value = "15m";
+            else if (sec === 1800) timerSelect.value = "30m";
+            else if (sec === 3600) timerSelect.value = "1h";
+            else if (sec === 7200) timerSelect.value = "2h";
+          }
+        }
+      } else if (state.sleepTimer) {
         const timerSelect = document.getElementById("sleepTimerSelect");
         if (timerSelect) timerSelect.value = state.sleepTimer;
       }

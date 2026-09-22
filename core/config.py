@@ -31,8 +31,12 @@ def get_config_dir() -> Path:
 
     try:
         path.mkdir(parents=True, exist_ok=True)
+        test_file = path / ".write_test"
+        with open(test_file, "w") as f:
+            f.write("1")
+        test_file.unlink(missing_ok=True)
         return path
-    except PermissionError:
+    except Exception:
         # In sandboxed environments or restricted users, fallback to workspace .config
         fallback_path = Path.cwd() / ".safe_eject_config"
         fallback_path.mkdir(parents=True, exist_ok=True)

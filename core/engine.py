@@ -269,8 +269,10 @@ class SafeEjectEngine:
 
     def _on_idle_sleep(self, _targets: List[str]):
         """Triggered when Mac is idle beyond the sleep timer (default 2 mins)."""
-        # Only put the individually chosen SSDs to sleep!
+        # Only put the individually chosen SSDs to sleep (or all managed/external drives if none singled out)
         sleep_targets = self.get_sleep_selected_drives()
+        if not sleep_targets:
+            sleep_targets = self.get_managed_drives() or self.get_external_drives()
         if not sleep_targets:
             return
 

@@ -313,6 +313,12 @@ def cmd_sleep_system(engine: SafeEjectEngine, args):
     engine.sleep_system()
 
 
+def cmd_idle_sleep(engine: SafeEjectEngine, args):
+    """Trigger idle sleep on selected SSDs or all external drives."""
+    print("\nTriggering idle sleep for drives...")
+    engine._on_idle_sleep([])
+
+
 def cmd_open(engine: SafeEjectEngine, args):
     """Open a mounted volume in Finder or Explorer."""
     ok = engine.open_volume(args.target)
@@ -466,6 +472,9 @@ def build_parser() -> argparse.ArgumentParser:
     # sleep-system
     subparsers.add_parser("sleep-system", help="Put the system to sleep")
 
+    # idle-sleep
+    subparsers.add_parser("idle-sleep", help="Trigger idle sleep on selected/all drives")
+
     # open <target>
     p_open = subparsers.add_parser("open", help="Open a mounted volume in Finder or Explorer")
     p_open.add_argument("target", help="Volume name or mount point")
@@ -527,6 +536,8 @@ def main():
         cmd_eject_and_sleep(engine, args)
     elif args.command == "sleep-system":
         cmd_sleep_system(engine, args)
+    elif args.command == "idle-sleep":
+        cmd_idle_sleep(engine, args)
     elif args.command == "open":
         cmd_open(engine, args)
     elif args.command == "mount-and-open":
