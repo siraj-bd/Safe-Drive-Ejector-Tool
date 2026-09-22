@@ -36,11 +36,9 @@ if [ "$OS" = "Darwin" ]; then
     # 3. Load LaunchAgent & Launch app
     echo "[3/3] Starting Safe Drive Ejector Tool in Menu Bar..."
     killall SafeEjectMenuBar 2>/dev/null || true
+    sleep 0.5
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
     launchctl load "$PLIST_DEST" 2>/dev/null || true
-    
-    # Also run directly if not loaded via launchd
-    nohup "$DIR/bin/SafeEjectMenuBar" > /tmp/safeeject_app.log 2>&1 &
     
     echo ""
     echo "======================================================="

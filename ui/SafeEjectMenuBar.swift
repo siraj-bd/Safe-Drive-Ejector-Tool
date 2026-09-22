@@ -1,6 +1,7 @@
 import Cocoa
 import Foundation
 import WebKit
+import Darwin
 
 // MARK: - Custom Borderless Floating Panel
 // Provides 100% transparent container with no native NSPopover frame, no arrow, and no halo.
@@ -470,6 +471,16 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 self.webView.evaluateJavaScript(js, completionHandler: nil)
             }
         }
+    }
+}
+
+// Single-instance process lock to prevent duplicate menu bar icons
+let lockFilePath = "/tmp/com.user.safeeject.lock"
+let lockFd = open(lockFilePath, O_CREAT | O_RDWR, 0o644)
+if lockFd >= 0 {
+    if flock(lockFd, LOCK_EX | LOCK_NB) != 0 {
+        NSLog("SafeEjectMenuBar: Another instance is already running. Exiting.")
+        exit(0)
     }
 }
 
