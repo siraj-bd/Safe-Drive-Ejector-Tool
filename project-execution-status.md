@@ -1,28 +1,21 @@
 # Project Execution Status: External SSD LED-OFF Deep Sleep, Hierarchy & OS Hover Details
 
 **Date**: September 23, 2026  
-**Status**: COMPLETE & FULLY VERIFIED (24/24 Unit Tests PASS &bull; Native Swift Build Exit Code 0 &bull; Live Hardware Verified)  
+**Status**: COMPLETE & FULLY VERIFIED (29/29 Unit Tests PASS &bull; Native Swift Build Exit Code 0 &bull; Live Hardware Verified)  
 **Target Hardware Tested**: Transcend StoreJet 480 GB SSD (Bridge: ASMedia ASM1153E, Parent Device: `/dev/disk7`, Partitions: `disk8s1` [`support-external-drive`], `disk9s1` [`Macbook Backup`])
 
 ---
 
 ## 1. Executive Summary
 
-We have successfully engineered, integrated, and verified the **100% OS-System-Derived Drive Hover Details (Tooltip/Popup)** alongside the **Dynamic Disk Utility Hierarchy Detection** and **LED-OFF Deep Sleep Mode** for external storage across macOS and Windows.
-
-### 100% OS-Derived System Architecture (Zero Hardcoding)
-- **Zero Hardcoding**: No hardcoded device IDs, partition names, filesystem types, capacities, or drive letters.
-- **Dynamic Introspection**:
-  - **macOS**: Introspected live via `diskutil list -plist`, `diskutil info -plist`, and IOKit registry.
-  - **Windows**: Introspected live via Windows CIM / WMI (`Win32_DiskDrive`, `Win32_LogicalDisk`, `Get-PhysicalDisk`).
-- **Compact UI Preserved**: The row label strictly displays the compact OS-assigned Device Identifier (`disk7`, `disk8s1`, `disk9s1`, `PhysicalDrive1`, `E:`).
-- **Dual-Layer Hover Details**:
-  - Hovering any Device Identifier opens a sleek, glassmorphic floating popup card displaying the live OS-reported details:
-    - **Physical Parent (`disk7`)**: Model Name (`StoreJet Transcend Media`), Location (`External`), Capacity (`480.1 GB`), Child Count (`3`), Type (`Solid state`).
-    - **Logical Volume (`disk8s1`)**: Volume Label (`support-external-drive`), Mount Point (`/Volumes/support-external-drive`), Capacity (`200.39 GB`), Type (`APFS Volume`).
-    - **Logical Volume (`disk9s1`)**: Volume Label (`Macbook Backup`), Mount Point (`/Volumes/Macbook Backup`), Capacity (`279.5 GB`), Type (`APFS Volume`).
-    - **Windows Volume (`E:`)**: Volume Label, Drive Letter, Mount Path, Capacity, File System/Type (`exFAT`, `NTFS`, `FAT32`).
-  - Standard multi-line `title` attribute is maintained as system accessibility fallback.
+We have successfully engineered, integrated, and verified the **Final Deep Sleep (SSD LED-OFF) Architecture with Parent Precedence & Partition Isolation**:
+1. **Physical Parent Target (`disk7`)**: When the physical parent disk is selected, it is the Deep Sleep target. Triggering unmount or timer executes the complete Deep Sleep workflow:
+   $$\text{flush (sync)} \longrightarrow \text{child partitions clean unmount} \longrightarrow \text{APFS container teardown} \longrightarrow \text{parent disk eject} \longrightarrow \mathbf{SSD\ LED\ OFF}$$
+2. **Strict Gatekeeping (No Force Eject Fallback)**: If any child volume or APFS container unmount fails, Deep Sleep is aborted immediately with a clear error report. Automatic force-eject is strictly avoided.
+3. **Partition-Level Unmount Isolation**: When only child partitions (`disk8s1`, `disk9s1`) are unmounted, parent disk is never ejected and the SSD LED stays ON.
+4. **Parent Precedence Rule**: When both parent disk and child partitions are selected, Deep Sleep executes once for the parent disk, subsuming child partitions without duplicate sequential operations.
+5. **No Skipping in Idle Sleep**: Physical parent disk is never skipped in `_on_idle_sleep` even if child volumes were already unmounted earlier.
+6. **Dedicated CLI & Menu Bar Routing**: Added `safe-eject deep-sleep` command and verified all timers (2m, 5m, 10m, 15m, 30m, 1h, 2h), Before Sleep, and Before Logout triggers.
 
 ---
 
@@ -30,6 +23,11 @@ We have successfully engineered, integrated, and verified the **100% OS-System-D
 
 | Test Suite / Case | Description | Result |
 | :--- | :--- | :--- |
+| `test_parent_precedence_in_eject_targets` | Verifies parent precedence rule: single Deep Sleep run when parent and child targets are combined | **PASS** |
+| `test_child_only_unmount_never_ejects_parent` | Verifies partition isolation: unmounting child partition never ejects parent SSD | **PASS** |
+| `test_deep_sleep_aborts_on_volume_unmount_failure_no_force` | Verifies Deep Sleep aborts on volume unmount error without using force | **PASS** |
+| `test_idle_sleep_parent_precedence_and_no_skipping` | Verifies `_on_idle_sleep` does not skip parent even if child volumes are unmounted | **PASS** |
+| `test_deep_sleep_teardown_apfs_containers` | Verifies clean synthesized APFS container teardown before parent physical eject | **PASS** |
 | `test_drive_and_volume_hover_metadata` | Verifies 100% dynamic OS metadata generation for macOS and Windows hover details | **PASS** |
 | `test_parent_and_child_hierarchy_control` | Verifies parent-child hierarchy, target unmount, and parent deep sleep | **PASS** |
 | `test_deep_sleep_all_mounted_volumes_unmounted_before_parent_eject` | Verifies clean volume unmount before parent eject | **PASS** |
@@ -44,7 +42,7 @@ We have successfully engineered, integrated, and verified the **100% OS-System-D
 | `test_bottom_status_summary` | Verifies status bar string formatting | **PASS** |
 | `test_open_volume_and_sleep_system` | Verifies volume opening and sleep actions | **PASS** |
 | **All Other Core & Feature Tests (11 cases)** | Drive models, size formatting, exclusions, UI states | **PASS** |
-| **Total Test Count** | **24 Passed, 0 Failed, 0 Skipped** | **100% PASS** |
+| **Total Test Count** | **29 Passed, 0 Failed, 0 Skipped** | **100% PASS** |
 
 ---
 

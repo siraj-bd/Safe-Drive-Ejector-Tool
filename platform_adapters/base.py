@@ -25,6 +25,14 @@ class PlatformAdapter(ABC):
         """Safely unmount a single volume / partition."""
         pass
 
+    def unmount_disk(self, disk_id: str) -> EjectResult:
+        """Safely unmount an entire disk or container."""
+        return EjectResult(target=disk_id, success=True, message=f"Disk {disk_id} unmounted.")
+
+    def get_apfs_containers_for_disk(self, disk_id: str) -> List[str]:
+        """Return synthesized container identifiers belonging to the disk if supported by platform."""
+        return []
+
     @abstractmethod
     def mount_drive(self, drive_id: str) -> RemountResult:
         """Remount all volumes belonging to a drive."""

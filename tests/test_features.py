@@ -27,9 +27,18 @@ class FeatureMockAdapter(PlatformAdapter):
         self.mounted = []
         self.unmounted_volumes = []
         self.mounted_volumes = []
+        self.unmounted_disks = []
+        self.containers = {}
 
     def get_drives(self):
         return self.drives
+
+    def unmount_disk(self, disk_id: str):
+        self.unmounted_disks.append(disk_id)
+        return EjectResult(target=disk_id, success=True, message=f"Unmounted disk {disk_id}")
+
+    def get_apfs_containers_for_disk(self, disk_id: str):
+        return self.containers.get(disk_id, [])
 
     def eject_drive(self, drive_id: str):
         self.ejected.append(drive_id)
@@ -463,6 +472,106 @@ class TestFunctionalFeatures(unittest.TestCase):
         res_mount_parent = volume_mgr.mount_target("disk7")
         self.assertTrue(res_mount_parent.success)
         self.assertIn("disk7", adapter.mounted)
+
+    def test_parent_precedence_in_eject_targets(self):
+        """When parent (disk7) and child (disk8s1) are both in targets, parent takes precedence (single Deep Sleep run)."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Both parent and child targets passed together
+        results = engine.eject_targets(["disk7", "disk8s1", "disk9s1"])
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].target, "disk7")
+        # Parent disk7 was ejected
+        self.assertIn("disk7", adapter.ejected)
+        # All child volumes were unmounted as part of Deep Sleep
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        self.assertIn("disk9s1", adapter.unmounted_volumes)
+
+    def test_child_only_unmount_never_ejects_parent(self):
+        """When only child partition is unmounted, parent disk is NEVER ejected, leaving SSD LED ON."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=False)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        # Even if disk8s1 was the only mounted volume, unmounting disk8s1 must NOT eject parent disk7
+        res = volume_mgr.unmount_target("disk8s1")
+        self.assertTrue(res.success)
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        self.assertNotIn("disk7", adapter.ejected)
+
+    def test_deep_sleep_aborts_on_volume_unmount_failure_no_force(self):
+        """If any child volume fails to unmount (e.g. busy), Deep Sleep aborts and NEVER force-ejects parent."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        # Simulate busy lock on disk8s1
+        def unmount_volume_fail(vol_id):
+            if vol_id == "disk8s1":
+                return EjectResult(target=vol_id, success=False, message="Resource busy", blocking_processes=[])
+            adapter.unmounted_volumes.append(vol_id)
+            return EjectResult(target=vol_id, success=True, message="OK")
+        adapter.unmount_volume = unmount_volume_fail
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        res = volume_mgr.deep_sleep_drive("disk7")
+        self.assertFalse(res.success)
+        self.assertIn("Deep Sleep aborted", res.message)
+        # Parent disk7 must NEVER be ejected on failure
+        self.assertNotIn("disk7", adapter.ejected)
+
+    def test_idle_sleep_parent_precedence_and_no_skipping(self):
+        """_on_idle_sleep must not skip parent disk7 even if child volumes were already unmounted."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=False)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=False)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2], is_sleep_selected=True)
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # has_mounted_volumes is False because both vol1 and vol2 are unmounted
+        self.assertFalse(drive.has_mounted_volumes)
+
+        # Trigger idle sleep: must still put parent disk7 into Deep Sleep
+        engine._on_idle_sleep([])
+        self.assertIn("disk7", adapter.ejected)
+
+    def test_deep_sleep_teardown_apfs_containers(self):
+        """Deep Sleep teardown must cleanly unmount synthesized APFS container disks before parent eject."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+        adapter.containers = {"disk7": ["disk8", "disk9"]}
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        res = volume_mgr.deep_sleep_drive("disk7")
+        self.assertTrue(res.success)
+        self.assertIn("disk8", adapter.unmounted_disks)
+        self.assertIn("disk9", adapter.unmounted_disks)
+        self.assertIn("disk7", adapter.ejected)
 
     def test_drive_and_volume_hover_metadata(self):
         """Verify dynamic OS metadata for hover tooltip (macOS and Windows formats)."""

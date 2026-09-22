@@ -267,6 +267,44 @@ class MacOSAdapter(PlatformAdapter):
                 message=f"Failed to unmount {volume_id}: {err_msg}",
             )
 
+    def unmount_disk(self, disk_id: str) -> EjectResult:
+        """Unmount an entire disk or container using diskutil unmountDisk."""
+        clean_id = disk_id.replace("/dev/", "").strip()
+        logger.info(f"Attempting to unmountDisk: {clean_id}")
+        proc = subprocess.run(["diskutil", "unmountDisk", clean_id], capture_output=True, text=True)
+        if proc.returncode == 0:
+            return EjectResult(
+                target=clean_id,
+                success=True,
+                message=f"Disk {clean_id} unmounted successfully.",
+            )
+        else:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            return EjectResult(
+                target=clean_id,
+                success=False,
+                message=f"Failed to unmountDisk {clean_id}: {err_msg}",
+            )
+
+    def get_apfs_containers_for_disk(self, disk_id: str) -> List[str]:
+        """Find any synthesized APFS container disks (e.g. disk8, disk9) associated with physical parent disk (e.g. disk7)."""
+        clean_id = disk_id.replace("/dev/", "").strip()
+        containers: List[str] = []
+        try:
+            cmd = ["diskutil", "list", "-plist"]
+            proc = subprocess.run(cmd, capture_output=True, check=True)
+            data = plistlib.loads(proc.stdout)
+            for item in data.get("AllDisksAndPartitions", []):
+                c_id = item.get("DeviceIdentifier")
+                for ps in item.get("APFSPhysicalStores", []):
+                    ps_id = ps.get("DeviceIdentifier", "")
+                    if ps_id.startswith(clean_id):
+                        if c_id and c_id not in containers:
+                            containers.append(c_id)
+        except Exception as e:
+            logger.debug(f"Failed to query APFS containers for {disk_id}: {e}")
+        return containers
+
     def mount_drive(self, drive_id: str) -> RemountResult:
         """Mount all volumes on a drive using diskutil mountDisk."""
         logger.info(f"Attempting to mount drive: {drive_id}")

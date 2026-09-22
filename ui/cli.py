@@ -6,8 +6,14 @@ Supports rich terminal formatting, command actions, and configuration management
 import argparse
 import json
 import logging
+import os
 import sys
 from typing import List
+
+# Ensure project root is in sys.path when invoked directly as a script
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from core.config import SafeEjectConfig, StateManager
 from core.engine import SafeEjectEngine
@@ -140,14 +146,33 @@ def cmd_eject_all(engine: SafeEjectEngine, args):
 
 
 def cmd_eject_single(engine: SafeEjectEngine, args):
-    """Eject specific drive(s) or volume(s)."""
+    """Eject specific drive(s) or volume(s) with Parent Precedence."""
     raw_targets = getattr(args, "targets", None) or [getattr(args, "target", "")]
-    targets = raw_targets if isinstance(raw_targets, list) else [raw_targets]
-    for target in targets:
-        if not target:
-            continue
-        print(f"\nEjecting '{target}'...")
-        res = engine.eject_single(target)
+    targets = [t for t in (raw_targets if isinstance(raw_targets, list) else [raw_targets]) if t]
+    if not targets:
+        return
+    results = engine.eject_targets(targets)
+    for res in results:
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.message}")
+        if res.blocking_processes:
+            print(f"Blocking processes ({len(res.blocking_processes)}):")
+            for p in res.blocking_processes:
+                print(f"  - {p}")
+            print()
+
+
+def cmd_deep_sleep(engine: SafeEjectEngine, args):
+    """Explicit Deep Sleep (LED OFF) for physical parent target(s)."""
+    raw_targets = getattr(args, "targets", None) or [getattr(args, "target", "")]
+    targets = [t for t in (raw_targets if isinstance(raw_targets, list) else [raw_targets]) if t]
+    if not targets:
+        print("\nTriggering Deep Sleep for selected drives...")
+        engine._on_idle_sleep([])
+        return
+    for t in targets:
+        print(f"\nPutting '{t}' into Deep Sleep (LED OFF)...")
+        res = engine.deep_sleep_target(t)
         icon = "✓" if res.success else "✗"
         print(f" {icon} {res.message}\n")
         if res.blocking_processes:
@@ -441,6 +466,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_eject = subparsers.add_parser("eject", help="Eject specific disk(s) or volume(s)")
     p_eject.add_argument("targets", nargs="+", help="Disk identifier(s) (e.g. disk8s1) or volume name/mountpoint")
 
+    # deep-sleep <targets>
+    p_deep_sleep = subparsers.add_parser("deep-sleep", help="Put physical parent drive(s) into Deep Sleep (LED OFF)")
+    p_deep_sleep.add_argument("targets", nargs="*", help="Parent disk identifier(s) (e.g. disk7)")
+
     # remount-all
     p_remount_all = subparsers.add_parser("remount-all", help="Remount previously ejected drives")
     p_remount_all.add_argument("--only-recorded", action="store_true", help="Only remount drives recorded in sleep state")
@@ -470,6 +499,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # status
     subparsers.add_parser("status", help="Show current daemon configuration and drive status")
+
+    # json-status
+    subparsers.add_parser("json-status", help="Output live status in JSON format")
 
     # test-notify
     subparsers.add_parser("test-notify", help="Send a test desktop notification")
@@ -528,6 +560,8 @@ def main():
         cmd_eject_all(engine, args)
     elif args.command == "eject":
         cmd_eject_single(engine, args)
+    elif args.command == "deep-sleep":
+        cmd_deep_sleep(engine, args)
     elif args.command == "remount-all":
         cmd_remount_all(engine, args)
     elif args.command == "remount":
@@ -558,6 +592,9 @@ def main():
         cmd_daemon(engine, args)
     elif args.command == "status":
         print(f"\n{engine.get_bottom_status()}\n")
+    elif args.command == "json-status":
+        import main as root_main
+        root_main.handle_json_status()
     elif args.command == "config":
         cmd_config(engine, args)
     elif args.command == "test-notify":

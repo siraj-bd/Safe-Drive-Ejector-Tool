@@ -269,35 +269,125 @@ class SafeEjectEngine:
         """Toggle managed state for a drive (up to 6 max)."""
         return self.volume_manager.toggle_managed(target)
 
+    def deep_sleep_target(self, target: str) -> EjectResult:
+        """Dedicated Deep Sleep (LED-OFF) for a physical parent drive or target."""
+        res = self.volume_manager.deep_sleep_drive(target)
+        if res.success:
+            self.idle_monitor.mark_drive_asleep(target)
+            self.volume_manager.play_sound(self.config.success_sound)
+        else:
+            self.volume_manager.play_sound(self.config.failure_sound)
+        return res
+
+    def eject_targets(self, targets: List[str]) -> List[EjectResult]:
+        """
+        Eject or unmount specific targets enforcing Parent Precedence:
+        - If parent physical drive (e.g. disk7) is among targets:
+          Execute Deep Sleep once for the entire SSD (eject parent, LED OFF).
+          Any child partitions of this parent in targets are subsumed.
+        - If only child partition(s) are targeted (e.g. disk8s1):
+          Unmount partition only; never eject parent disk or turn LED off.
+        """
+        if not targets:
+            return []
+
+        all_drives = self.get_external_drives()
+        clean_targets = [t.strip().replace("/dev/", "") for t in targets if t and t.strip()]
+        results: List[EjectResult] = []
+        handled_targets = set()
+
+        # 1. Identify parent drives present in targets
+        for d in all_drives:
+            d_id = d.id.replace("/dev/", "")
+            if d_id in clean_targets or d.primary_uuid in clean_targets:
+                logger.info(f"Parent Precedence: Executing Deep Sleep for physical parent drive {d.id}...")
+                res = self.volume_manager.deep_sleep_drive(d.id)
+                results.append(res)
+                if res.success:
+                    self.idle_monitor.mark_drive_asleep(d.id)
+                    for v in d.volumes:
+                        self.idle_monitor.mark_drive_asleep(v.device_id)
+                handled_targets.add(d_id)
+                if d.primary_uuid:
+                    handled_targets.add(d.primary_uuid)
+                for v in d.volumes:
+                    v_id = v.device_id.replace("/dev/", "")
+                    handled_targets.add(v_id)
+                    if v.uuid:
+                        handled_targets.add(v.uuid)
+                    if v.name:
+                        handled_targets.add(v.name)
+
+        # 2. Process remaining targets (child partitions whose parent was NOT targeted)
+        for t in clean_targets:
+            if t in handled_targets:
+                continue
+            logger.info(f"Partition unmount for: {t} (Parent remains awake)...")
+            res = self.volume_manager.unmount_target(t)
+            results.append(res)
+            if res.success:
+                self.idle_monitor.mark_drive_asleep(t)
+            handled_targets.add(t)
+
+        success = any(r.success for r in results)
+        if success:
+            self.volume_manager.play_sound(self.config.success_sound)
+        else:
+            self.volume_manager.play_sound(self.config.failure_sound)
+        return results
+
     def _on_idle_sleep(self, _targets: List[str]):
-        """Triggered when Mac is idle beyond the sleep timer (default 2 mins) or on system sleep."""
-        sleep_targets = self.get_sleep_selected_drives()
-        if not sleep_targets:
-            sleep_targets = self.get_managed_drives() or self.get_external_drives()
-        if not sleep_targets:
+        """
+        Triggered when Mac is idle beyond the sleep timer (e.g. 2m/5m/10m/15m/30m/1h/2h)
+        or before system sleep / logout:
+        - If parent SSD (disk7) is selected: Deep Sleep (flush -> clean unmount children -> APFS container teardown -> parent eject -> LED OFF).
+          Does not skip if children already unmounted.
+        - If only child partition selected: Unmount partition only (parent stays awake, LED stays ON).
+        - If both selected: Parent precedence applies (single Deep Sleep run).
+        """
+        all_drives = self.get_external_drives()
+        if not all_drives:
             return
 
-        logger.info(f"Triggering Deep Sleep (LED OFF) for {len(sleep_targets)} drive(s)...")
-        ejected_count = 0
+        has_any_selection = any(d.is_sleep_selected or any(v.is_sleep_selected for v in d.volumes) for d in all_drives)
+        has_managed = any(d.is_managed for d in all_drives)
 
-        for d in sleep_targets:
-            if not d.has_mounted_volumes:
-                continue
+        logger.info(f"Triggering Idle Sleep workflow (has_explicit_selection: {has_any_selection})...")
+        sleep_count = 0
 
-            r = self.volume_manager.deep_sleep_drive(d.id)
-            if r.success:
-                ejected_count += 1
-                for v in d.volumes:
-                    self.idle_monitor.mark_drive_asleep(v.device_id)
+        for d in all_drives:
+            # If no explicit selection, fallback to managed drives or all drives
+            should_sleep_parent = d.is_sleep_selected or (not has_any_selection and (d.is_managed if has_managed else True))
+
+            if should_sleep_parent:
+                logger.info(f"Idle Sleep: Parent precedence for {d.id}. Executing Deep Sleep (LED OFF)...")
+                r = self.volume_manager.deep_sleep_drive(d.id)
+                if r.success:
+                    sleep_count += 1
+                    self.idle_monitor.mark_drive_asleep(d.id)
+                    for v in d.volumes:
+                        self.idle_monitor.mark_drive_asleep(v.device_id)
+                else:
+                    logger.warning(f"Could not put drive {d.id} into Deep Sleep: {r.message}")
             else:
-                logger.warning(f"Could not put drive {d.id} into Deep Sleep: {r.message}")
+                # Parent NOT selected; check child partitions
+                for v in d.volumes:
+                    if v.is_sleep_selected and v.is_mounted:
+                        logger.info(f"Idle Sleep: Unmounting child partition {v.device_id} ({v.name}). Parent {d.id} remains awake.")
+                        res = self.adapter.unmount_volume(v.device_id)
+                        if res.success:
+                            sleep_count += 1
+                            StateManager.save_ejected_drives([], [v.device_id], append=True)
+                            self.idle_monitor.mark_drive_asleep(v.device_id)
+                        else:
+                            logger.warning(f"Could not unmount partition {v.device_id}: {res.message}")
 
-        if ejected_count > 0:
+        if sleep_count > 0:
             self.volume_manager.play_sound(self.config.success_sound)
             if self.config.show_notifications:
                 self.adapter.show_notification(
                     "SafeEject - Deep Sleep",
-                    f"{ejected_count} SSD(s) entered Deep Sleep (LED OFF).",
+                    f"{sleep_count} external drive item(s) safely put to sleep.",
                 )
 
     def _on_touch_wake(self, sleeping_ids: List[str]):

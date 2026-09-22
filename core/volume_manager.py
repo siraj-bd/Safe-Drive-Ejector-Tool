@@ -180,14 +180,11 @@ class SSDVolumeManager:
                     or (v.uuid and v.uuid.lower() == clean_target.lower())
                     or (v.name and v.name.lower() == clean_target.lower())
                 ):
-                    logger.info(f"Matched volume {v.device_id} ({v.name}). Unmounting volume only.")
+                    logger.info(f"Matched volume {v.device_id} ({v.name}). Unmounting volume only (parent remains awake, LED ON).")
                     res = self.adapter.unmount_volume(v.device_id)
                     if res.success:
                         StateManager.save_ejected_drives([], [v.device_id], append=True)
-                        other_mounted = [other for other in d.volumes if other.device_id != v.device_id and other.is_mounted]
-                        if not other_mounted:
-                            logger.info(f"All volumes on physical drive {d.id} are now unmounted. Entering Deep Sleep (LED OFF)...")
-                            self.adapter.eject_drive(d.id)
+                    # NOTE: Do NOT automatically eject parent drive. Partition unmount must leave parent awake and LED ON.
                     return res
 
         # 2. Match parent physical drive
@@ -210,10 +207,12 @@ class SSDVolumeManager:
         """
         Deep Sleep / LED-OFF Sleep workflow:
         1. Flush filesystem buffers (sync).
-        2. Safely unmount all mounted volumes of target physical drive.
-        3. If ANY required unmount fails, ABORT physical eject and report error.
-        4. Only after successful unmounts, eject physical parent disk to trigger LED-OFF sleep.
-        5. Record sleeping relevant volumes for Auto-Wake.
+        2. Safely unmount all mounted child volumes of target physical drive.
+        3. If ANY required unmount fails, ABORT immediately and report error (NEVER force-eject).
+        4. On macOS, cleanly teardown synthesized APFS container dependencies (diskutil unmountDisk).
+           If ANY container teardown fails, ABORT immediately.
+        5. Only after all unmounts and teardowns succeed, eject physical parent disk (diskutil eject <parentId>).
+        6. Record sleeping relevant volumes for selective Auto-Wake.
         """
         import subprocess, sys
         clean_id = drive_id.strip().replace("/dev/", "")
@@ -243,7 +242,7 @@ class SSDVolumeManager:
         except Exception:
             pass
 
-        # 2. Safely unmount all mounted volumes
+        # 2. Safely unmount all mounted child volumes
         vols_to_unmount = [v for v in target_drive.volumes if v.is_mounted]
         unmounted_vols: List[str] = []
 
@@ -259,7 +258,20 @@ class SSDVolumeManager:
                 )
             unmounted_vols.append(v.device_id)
 
-        # 4. Only after successful unmounts, eject physical parent disk
+        # 3. Teardown associated synthesized APFS container disks (e.g. disk8, disk9)
+        if hasattr(self.adapter, "get_apfs_containers_for_disk"):
+            containers = self.adapter.get_apfs_containers_for_disk(target_drive.id)
+            for c_id in containers:
+                c_res = self.adapter.unmount_disk(c_id)
+                if not c_res.success:
+                    logger.error(f"Deep Sleep aborted: APFS container {c_id} teardown failed: {c_res.message}")
+                    return EjectResult(
+                        target=target_drive.id,
+                        success=False,
+                        message=f"Deep Sleep aborted: Container {c_id} in use ({c_res.message})",
+                    )
+
+        # 4. Only after all successful unmounts & container teardowns, eject physical parent disk
         eject_res = self.adapter.eject_drive(target_drive.id)
         if eject_res.success:
             if unmounted_vols:
