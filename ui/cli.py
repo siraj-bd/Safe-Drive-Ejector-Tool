@@ -353,7 +353,7 @@ def cmd_config(engine: SafeEjectEngine, args):
     """Manage configuration settings."""
     if args.action == "show":
         print("\nCurrent Configuration:")
-        print(json.dumps(engine.config.__dict__, indent=4))
+        print(json.dumps(engine.config.to_dict(), indent=4))
         print()
     elif args.action == "set":
         if not args.key or args.value is None:

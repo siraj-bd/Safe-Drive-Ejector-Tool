@@ -75,13 +75,14 @@ class SafeEjectEngine:
         return self.eject_now()
 
     def remount_all_ejected(self) -> List[RemountResult]:
-        """Remount drives that were previously safely ejected by SafeEject."""
+        """Remount drives and volumes that were previously safely ejected by SafeEject."""
         state = StateManager.load_ejected_drives()
         drive_ids = state.get("drive_ids", [])
+        volume_ids = state.get("volume_identifiers", [])
         results: List[RemountResult] = []
 
-        if not drive_ids:
-            logger.info("No recorded ejected drives in state. Mounting managed drives...")
+        if not drive_ids and not volume_ids:
+            logger.info("No recorded ejected drives or volumes in state. Mounting managed drives...")
             managed = self.get_managed_drives()
             for d in managed:
                 res = self.adapter.mount_drive(d.id)
@@ -92,17 +93,33 @@ class SafeEjectEngine:
                 self.volume_manager.play_sound(self.config.success_sound)
             return results
 
-        logger.info(f"Remounting {len(drive_ids)} previously ejected drives...")
+        logger.info(f"Remounting {len(volume_ids)} volume(s) and {len(drive_ids)} drive(s)...")
         success_count = 0
 
+        # 1. Remount standalone volume partitions (not covered by whole-drive remounts)
+        standalone_vols = [
+            vid for vid in volume_ids
+            if not any(vid.startswith(did + "s") or vid.startswith(did + "p") or vid == did for did in drive_ids)
+        ]
+
+        for vid in standalone_vols:
+            res = self.volume_manager.mount_target(vid)
+            results.append(res)
+            if res.success:
+                success_count += 1
+                self.idle_monitor.mark_drive_awake(vid)
+            else:
+                logger.warning(f"Could not remount volume {vid}: {res.message}")
+
+        # 2. Remount full physical drives
         for drive_id in drive_ids:
-            res = self.adapter.mount_drive(drive_id)
+            res = self.volume_manager.mount_target(drive_id)
             results.append(res)
             if res.success:
                 success_count += 1
                 self.idle_monitor.mark_drive_awake(drive_id)
             else:
-                logger.warning(f"Could not remount {drive_id}: {res.message}")
+                logger.warning(f"Could not remount drive {drive_id}: {res.message}")
 
         StateManager.clear_ejected_drives()
 
@@ -111,12 +128,12 @@ class SafeEjectEngine:
             if self.config.show_notifications:
                 self.adapter.show_notification(
                     "SafeEject",
-                    f"{success_count} external drive(s) remounted successfully.",
+                    f"{success_count} external drive/volume item(s) remounted successfully.",
                 )
         else:
             self.volume_manager.play_sound(self.config.failure_sound)
 
-        self.status_message = f"Remounted {success_count} drive(s)"
+        self.status_message = f"Remounted {success_count} item(s)"
         return results
 
     def eject_single(self, target: str) -> EjectResult:
@@ -256,12 +273,39 @@ class SafeEjectEngine:
 
         logger.info(f"Mac idle threshold reached. Putting {len(sleep_targets)} selected SSD(s) to sleep...")
         ejected_count = 0
+        asleep_ids: List[str] = []
+        asleep_vols: List[str] = []
+
         for d in sleep_targets:
-            if d.has_mounted_volumes:
+            if not d.has_mounted_volumes:
+                continue
+
+            if self.config.unmount_instead_of_eject:
+                # Unmount mounted volumes without detaching physical USB hardware
+                logger.info(f"Unmounting mounted volumes for drive {d.id} (unmount_instead_of_eject=True)")
+                vols_to_unmount = [v for v in d.volumes if v.is_mounted]
+                drive_had_success = False
+                for v in vols_to_unmount:
+                    r = self.adapter.unmount_volume(v.device_id)
+                    if r.success:
+                        asleep_vols.append(v.device_id)
+                        self.idle_monitor.mark_drive_asleep(v.device_id)
+                        drive_had_success = True
+                    else:
+                        logger.warning(f"Could not unmount volume {v.device_id}: {r.message}")
+                if drive_had_success:
+                    ejected_count += 1
+            else:
                 res = self.adapter.eject_drive(d.id)
                 if res.success:
                     ejected_count += 1
+                    asleep_ids.append(d.id)
                     self.idle_monitor.mark_drive_asleep(d.id)
+                else:
+                    logger.warning(f"Could not eject drive {d.id}: {res.message}")
+
+        if asleep_ids or asleep_vols:
+            StateManager.save_ejected_drives(asleep_ids, asleep_vols, append=True)
 
         if ejected_count > 0:
             self.volume_manager.play_sound(self.config.success_sound)
@@ -277,13 +321,16 @@ class SafeEjectEngine:
             logger.debug("Mac touched, but wake_mode is manual. Keeping SSDs asleep.")
             return
 
-        logger.info(f"User touched Mac. Auto-activating {len(sleeping_ids)} sleeping SSD(s)...")
+        logger.info(f"User touched Mac. Auto-activating {len(sleeping_ids)} sleeping target(s)...")
         wake_count = 0
-        for drive_id in sleeping_ids:
-            res = self.adapter.mount_drive(drive_id)
+        for target_id in sleeping_ids:
+            res = self.volume_manager.mount_target(target_id)
             if res.success:
                 wake_count += 1
-                self.idle_monitor.mark_drive_awake(drive_id)
+                self.idle_monitor.mark_drive_awake(target_id)
+            else:
+                # Keep marked as asleep if remount failed
+                self.idle_monitor.mark_drive_asleep(target_id)
 
         if wake_count > 0:
             self.volume_manager.play_sound(self.config.success_sound)
@@ -306,7 +353,7 @@ class SafeEjectEngine:
 
         def on_wake():
             logger.info("Power event: WAKE triggered (Auto Awake).")
-            if self.config.auto_awake and self.config.remount_on_wake:
+            if self.config.remount_on_wake:
                 time.sleep(1.5)
                 self.remount_all_ejected()
 

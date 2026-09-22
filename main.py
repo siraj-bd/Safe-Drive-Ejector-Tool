@@ -51,11 +51,11 @@ def handle_json_status():
             state = {"drive_ids": [], "volume_identifiers": []}
         else:
             state["volume_identifiers"] = active_ejected_vols
-            StateManager.save_ejected_drives(state.get("drive_ids", []), active_ejected_vols)
+            StateManager.save_ejected_drives(state.get("drive_ids", []), active_ejected_vols, append=False)
 
     data = {
         "platform": sys.platform,
-        "config": engine.config.__dict__,
+        "config": engine.config.to_dict(),
         "sleep_timer_label": engine.config.sleep_timer_label,
         "bottom_status": engine.get_bottom_status(),
         "ejected_state": state,

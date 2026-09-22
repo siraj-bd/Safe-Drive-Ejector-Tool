@@ -12,7 +12,8 @@ Unit tests for Safe-Drive-Ejector-Tool functional features:
 import time
 import unittest
 
-from core.config import MAX_MANAGED_DRIVES, SLEEP_TIMER_PRESETS, SafeEjectConfig
+from core.config import MAX_MANAGED_DRIVES, SLEEP_TIMER_PRESETS, SafeEjectConfig, StateManager
+from core.engine import SafeEjectEngine
 from core.idle_monitor import IdleMonitor
 from core.models import DriveInfo, EjectResult, RemountResult, VolumeInfo
 from core.volume_manager import SSDVolumeManager
@@ -24,6 +25,8 @@ class FeatureMockAdapter(PlatformAdapter):
         self.drives = drives or []
         self.ejected = []
         self.mounted = []
+        self.unmounted_volumes = []
+        self.mounted_volumes = []
 
     def get_drives(self):
         return self.drives
@@ -34,6 +37,7 @@ class FeatureMockAdapter(PlatformAdapter):
 
     def unmount_volume(self, volume_id: str):
         self.ejected.append(volume_id)
+        self.unmounted_volumes.append(volume_id)
         return EjectResult(target=volume_id, success=True, message=f"Unmounted {volume_id}")
 
     def mount_drive(self, drive_id: str):
@@ -42,6 +46,7 @@ class FeatureMockAdapter(PlatformAdapter):
 
     def mount_volume(self, volume_id: str):
         self.mounted.append(volume_id)
+        self.mounted_volumes.append(volume_id)
         return RemountResult(target=volume_id, success=True, message=f"Mounted {volume_id}")
 
     def get_blocking_processes(self, mount_point: str):
@@ -172,6 +177,95 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertEqual(config.success_sound, "Bubble")
         self.assertEqual(config.failure_sound, "Gong")
         self.assertTrue(config.unmount_instead_of_eject)
+
+    def test_config_aliases_and_to_dict(self):
+        config = SafeEjectConfig()
+        # Direct property setter/getter tests
+        config.eject_before_sleep = False
+        self.assertFalse(config.eject_on_sleep)
+        config.eject_on_sleep = True
+        self.assertTrue(config.eject_before_sleep)
+
+        config.auto_awake = False
+        self.assertFalse(config.remount_on_wake)
+        config.remount_on_wake = True
+        self.assertTrue(config.auto_awake)
+
+        config.notify_after_eject_remount = False
+        self.assertFalse(config.show_notifications)
+        config.show_notifications = True
+        self.assertTrue(config.notify_after_eject_remount)
+
+        # update_settings with legacy alias keys
+        config.update_settings({
+            "eject_before_sleep": False,
+            "auto_awake": False,
+            "notify_after_eject_remount": False,
+        })
+        self.assertFalse(config.eject_on_sleep)
+        self.assertFalse(config.remount_on_wake)
+        self.assertFalse(config.show_notifications)
+
+        # to_dict contains both primary and alias keys
+        d = config.to_dict()
+        self.assertIn("eject_on_sleep", d)
+        self.assertIn("eject_before_sleep", d)
+        self.assertIn("remount_on_wake", d)
+        self.assertIn("auto_awake", d)
+        self.assertIn("show_notifications", d)
+        self.assertIn("notify_after_eject_remount", d)
+
+    def test_idle_sleep_unmounts_volumes_not_hardware(self):
+        adapter = FeatureMockAdapter()
+        vol = VolumeInfo(device_id="disk8s1", name="SupportDrive", mount_point="/Volumes/SupportDrive", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="Samsung T7", is_external=True, volumes=[vol])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(
+            show_notifications=False,
+            unmount_instead_of_eject=True,
+            managed_drive_uuids=["disk7"],
+            selected_sleep_drive_uuids=["disk7"],
+        )
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Trigger idle sleep
+        engine._on_idle_sleep([])
+
+        # Volume must be unmounted, but hardware disk7 must NOT be ejected!
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        self.assertNotIn("disk7", adapter.ejected)
+        self.assertIn("disk8s1", engine.idle_monitor.sleeping_drive_ids)
+
+        # State must record the volume identifier
+        state = StateManager.load_ejected_drives()
+        self.assertIn("disk8s1", state.get("volume_identifiers", []))
+
+        # Touch wake should remount the volume
+        engine._on_touch_wake(["disk8s1"])
+        self.assertIn("disk8s1", adapter.mounted_volumes)
+        self.assertNotIn("disk8s1", engine.idle_monitor.sleeping_drive_ids)
+
+    def test_remount_all_ejected_volume_identifiers(self):
+        adapter = FeatureMockAdapter()
+        vol = VolumeInfo(device_id="disk9s1", name="WorkBackup", mount_point="/Volumes/WorkBackup", is_mounted=False)
+        drive = DriveInfo(id="disk9", name="BackupSSD", is_external=True, volumes=[vol])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Save only volume identifier in state
+        StateManager.save_ejected_drives([], ["disk9s1"], append=False)
+
+        results = engine.remount_all_ejected()
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertIn("disk9s1", adapter.mounted_volumes)
+
+        # State should be cleared
+        cleared_state = StateManager.load_ejected_drives()
+        self.assertEqual(cleared_state.get("volume_identifiers", []), [])
 
 
 if __name__ == "__main__":

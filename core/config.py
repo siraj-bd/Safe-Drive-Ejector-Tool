@@ -73,7 +73,6 @@ class SafeEjectConfig:
     start_at_login: bool = True
     show_menubar_icon: bool = True
     show_disks_count_badge: bool = True
-    eject_before_sleep: bool = True
     eject_after_display_off: bool = False
     eject_before_logout: bool = False
 
@@ -86,32 +85,45 @@ class SafeEjectConfig:
     unmount_instead_of_eject: bool = True
 
     # Notification & Sounds
-    progress_window_eject: bool = True
-    progress_window_remount: bool = True
-    notify_after_eject_remount: bool = True
     sound_on_success: bool = True
     sound_on_failure: bool = True
     success_sound: str = "Bubble"
     failure_sound: str = "Gong"
 
-    # Hotkeys
-    hotkey_eject: str = "^⌘E"
-    hotkey_eject_and_sleep: str = ""
-    hotkey_remount: str = "^⌘R"
-
     # Options
     remount_delay_seconds: int = 5
-    also_eject_disks: List[str] = field(default_factory=list)
-    dont_eject_disks: List[str] = field(default_factory=list)
-    dont_remount_disks: List[str] = field(default_factory=list)
 
     # Custom Functional Features (Individual SSD Selection & Mac Touch Wake)
     sleep_timer_seconds: int = 120       # Default: 2 minutes
     managed_drive_uuids: List[str] = field(default_factory=list) # Up to 6 managed drives
     selected_sleep_drive_uuids: List[str] = field(default_factory=list) # Individually selected SSDs to sleep
-    auto_awake: bool = True              # Automatically remount on wake or reconnect
     wake_mode: str = "touch"             # "touch" = auto active on Mac touch; "manual" = stay asleep until manual mount
     play_sounds: bool = True             # Audio feedback
+
+    # Backwards compatibility property aliases for unified flags
+    @property
+    def eject_before_sleep(self) -> bool:
+        return self.eject_on_sleep
+
+    @eject_before_sleep.setter
+    def eject_before_sleep(self, val: bool) -> None:
+        self.eject_on_sleep = bool(val)
+
+    @property
+    def auto_awake(self) -> bool:
+        return self.remount_on_wake
+
+    @auto_awake.setter
+    def auto_awake(self, val: bool) -> None:
+        self.remount_on_wake = bool(val)
+
+    @property
+    def notify_after_eject_remount(self) -> bool:
+        return self.show_notifications
+
+    @notify_after_eject_remount.setter
+    def notify_after_eject_remount(self, val: bool) -> None:
+        self.show_notifications = bool(val)
 
     @property
     def sleep_timer_label(self) -> str:
@@ -187,16 +199,30 @@ class SafeEjectConfig:
             return True
         return False
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary including compatibility aliases."""
+        data = asdict(self)
+        data["eject_before_sleep"] = self.eject_on_sleep
+        data["auto_awake"] = self.remount_on_wake
+        data["notify_after_eject_remount"] = self.show_notifications
+        return data
+
     def update_settings(self, updates: Dict[str, Any]) -> None:
         """Update multiple configuration settings at once and save."""
+        alias_map = {
+            "eject_before_sleep": "eject_on_sleep",
+            "auto_awake": "remount_on_wake",
+            "notify_after_eject_remount": "show_notifications",
+        }
         for k, v in updates.items():
-            if hasattr(self, k):
-                field_val = getattr(self, k)
+            target_key = alias_map.get(k, k)
+            if hasattr(self, target_key):
+                field_val = getattr(self, target_key)
                 if isinstance(field_val, bool) and isinstance(v, str):
                     v = v.lower() in ("true", "1", "yes")
                 elif isinstance(field_val, int) and isinstance(v, (str, float)):
                     v = int(v)
-                setattr(self, k, v)
+                setattr(self, target_key, v)
         self.save()
 
     @classmethod
@@ -210,6 +236,14 @@ class SafeEjectConfig:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            # Map legacy/alias keys if primary is absent
+            if "eject_on_sleep" not in data and "eject_before_sleep" in data:
+                data["eject_on_sleep"] = data["eject_before_sleep"]
+            if "remount_on_wake" not in data and "auto_awake" in data:
+                data["remount_on_wake"] = data["auto_awake"]
+            if "show_notifications" not in data and "notify_after_eject_remount" in data:
+                data["show_notifications"] = data["notify_after_eject_remount"]
+
             return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
         except Exception:
             return cls()
@@ -238,12 +272,22 @@ class StateManager:
         return get_config_dir() / "ejected_state.json"
 
     @classmethod
-    def save_ejected_drives(cls, drive_ids: List[str], volume_identifiers: List[str]) -> None:
+    def save_ejected_drives(
+        cls, drive_ids: List[str], volume_identifiers: List[str], append: bool = True
+    ) -> None:
         try:
+            if append:
+                existing = cls.load_ejected_drives()
+                combined_drives = list(dict.fromkeys(existing.get("drive_ids", []) + drive_ids))
+                combined_vols = list(dict.fromkeys(existing.get("volume_identifiers", []) + volume_identifiers))
+            else:
+                combined_drives = list(dict.fromkeys(drive_ids))
+                combined_vols = list(dict.fromkeys(volume_identifiers))
+
             state_path = cls.get_state_file()
             data = {
-                "drive_ids": drive_ids,
-                "volume_identifiers": volume_identifiers,
+                "drive_ids": combined_drives,
+                "volume_identifiers": combined_vols,
             }
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
@@ -257,7 +301,11 @@ class StateManager:
             return {"drive_ids": [], "volume_identifiers": []}
         try:
             with open(state_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                return {
+                    "drive_ids": data.get("drive_ids", []),
+                    "volume_identifiers": data.get("volume_identifiers", []),
+                }
         except Exception:
             return {"drive_ids": [], "volume_identifiers": []}
 
