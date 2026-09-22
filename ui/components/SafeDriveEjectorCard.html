@@ -1907,12 +1907,62 @@
       const slotNum = currentDriveOffset + rowId - 1;
       const elem = document.getElementById(`checkDriver${rowId}`);
       if (!elem) return;
-      elem.classList.toggle("unchecked");
-      driverCheckStates[slotNum] = !elem.classList.contains("unchecked");
-      syncAllCheckboxState();
+
       const drive = currentDrives[slotNum - 1];
+      const isNowChecked = elem.classList.contains("unchecked"); // will become checked
+      driverCheckStates[slotNum] = isNowChecked;
+
+      if (isNowChecked) {
+        elem.classList.remove("unchecked");
+      } else {
+        elem.classList.add("unchecked");
+      }
+
+      // 1. Parent checkbox logic:
+      // If toggled drive is a physical parent (e.g. disk7), toggle all its child partitions as well!
+      if (drive && drive.is_parent && drive.child_ids && drive.child_ids.length > 0) {
+        currentDrives.forEach((d, idx) => {
+          const sNum = idx + 1;
+          if (drive.child_ids.includes(d.id)) {
+            driverCheckStates[sNum] = isNowChecked;
+            const visibleRow = sNum - currentDriveOffset + 1;
+            if (visibleRow >= 1 && visibleRow <= 4) {
+              const childElem = document.getElementById(`checkDriver${visibleRow}`);
+              if (childElem) {
+                if (isNowChecked) childElem.classList.remove("unchecked");
+                else childElem.classList.add("unchecked");
+              }
+            }
+          }
+        });
+      }
+
+      // 2. Child checkbox logic:
+      // If toggled drive is a child partition, update its parent's check state
+      if (drive && !drive.is_parent && drive.parent_id) {
+        const parentIdx = currentDrives.findIndex(d => d.id === drive.parent_id && d.is_parent);
+        if (parentIdx !== -1) {
+          const parentSlot = parentIdx + 1;
+          const parentDrive = currentDrives[parentIdx];
+          const allChildrenChecked = parentDrive.child_ids && parentDrive.child_ids.length > 0 && parentDrive.child_ids.every(cid => {
+            const cIdx = currentDrives.findIndex(cd => cd.id === cid);
+            return cIdx !== -1 && driverCheckStates[cIdx + 1] === true;
+          });
+          driverCheckStates[parentSlot] = allChildrenChecked;
+          const visibleParentRow = parentSlot - currentDriveOffset + 1;
+          if (visibleParentRow >= 1 && visibleParentRow <= 4) {
+            const pElem = document.getElementById(`checkDriver${visibleParentRow}`);
+            if (pElem) {
+              if (allChildrenChecked) pElem.classList.remove("unchecked");
+              else pElem.classList.add("unchecked");
+            }
+          }
+        }
+      }
+
+      syncAllCheckboxState();
       const targetId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : drive.uuid || drive.name) : `disk${slotNum}`;
-      postToHost({ action: "driveSelection", driverId: targetId, slot: slotNum, checked: driverCheckStates[slotNum] });
+      postToHost({ action: "driveSelection", driverId: targetId, slot: slotNum, checked: isNowChecked });
     }
 
     function toggleAllCheckbox() {
@@ -1921,6 +1971,9 @@
       allElem.classList.toggle("unchecked");
       const isAllChecked = !allElem.classList.contains("unchecked");
 
+      currentDrives.forEach((_, idx) => {
+        driverCheckStates[idx + 1] = isAllChecked;
+      });
       for (let i = 1; i <= 4; i++) {
         const slotNum = currentDriveOffset + i - 1;
         driverCheckStates[slotNum] = isAllChecked;
@@ -1986,7 +2039,11 @@
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
         const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
-        startProcessingLoop("Unmounting", devId);
+        if (drive && drive.is_parent) {
+          startProcessingLoop("Deep Sleep", devId);
+        } else {
+          startProcessingLoop("Unmounting", devId);
+        }
         postToHost({ action: "unmount", target: devId, slot: slotNum });
       }
     }
@@ -2012,9 +2069,11 @@
       if (typeof overrideCount === "number") {
         actualCount = Math.max(0, overrideCount);
       } else {
-        // Real dynamic calculation: count how many drives in currentDrives have mounted === false
+        // Real dynamic calculation: count how many child partitions have mounted === false
         if (currentDrives && currentDrives.length > 0) {
-          actualCount = currentDrives.filter(d => d.mounted === false).length;
+          const childDrives = currentDrives.filter(d => !d.is_parent);
+          const countSource = childDrives.length > 0 ? childDrives : currentDrives;
+          actualCount = countSource.filter(d => d.mounted === false).length;
         }
       }
 
@@ -2129,34 +2188,44 @@
 
       if (state.external_drives && Array.isArray(state.external_drives)) {
         const drives = [];
-        state.external_drives.forEach(d => {
-          let addedForDrive = false;
-          if (d.volumes && d.volumes.length > 0) {
-            d.volumes.forEach(v => {
-              if (v.name && v.name !== "EFI" && v.fs_type !== "Apple_APFS") {
-                drives.push({
-                  id: v.device_id || d.id || "",
-                  name: v.name,
-                  mounted: v.is_mounted,
-                  uuid: v.uuid || ""
-                });
-                addedForDrive = true;
-              }
-            });
-          }
-          if (!addedForDrive && d.name) {
-            drives.push({
-              id: d.id || "",
-              name: d.name,
-              mounted: d.is_mounted !== undefined ? d.is_mounted : true,
-              uuid: d.primary_uuid || ""
-            });
-          }
+        // Sort physical external drives by ID (e.g. disk7 before disk10)
+        const sortedExternal = [...state.external_drives].sort((a, b) => {
+          return (a.id || "").localeCompare(b.id || "", undefined, { numeric: true, sensitivity: 'base' });
         });
 
-        // Natural serial sort by BSD Name (disk3s1 < disk6s1 < disk8s1 < disk9s1 etc.)
-        drives.sort((a, b) => {
-          return a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' });
+        sortedExternal.forEach(d => {
+          const parentId = (d.id || "").replace(/^\/dev\//, '');
+          const validChildVolumes = (d.volumes || []).filter(v => v.name !== "EFI" && v.fs_type !== "Apple_APFS");
+          const childIds = validChildVolumes.map(v => (v.device_id || "").replace(/^\/dev\//, ''));
+
+          // 1. Physical parent device (Disk 1: disk7)
+          if (parentId) {
+            drives.push({
+              id: parentId,
+              name: parentId,
+              is_parent: true,
+              parent_id: parentId,
+              child_ids: childIds,
+              mounted: validChildVolumes.length > 0 ? validChildVolumes.some(v => v.is_mounted) : (d.is_mounted !== false),
+              uuid: d.primary_uuid || parentId
+            });
+          }
+
+          // 2. Child partitions in sequence (Disk 2: disk8s1, Disk 3: disk9s1...)
+          validChildVolumes.forEach(v => {
+            const childId = (v.device_id || "").replace(/^\/dev\//, '');
+            if (childId && childId !== parentId) {
+              drives.push({
+                id: childId,
+                name: childId,
+                is_parent: false,
+                parent_id: parentId,
+                child_ids: [],
+                mounted: v.is_mounted === true,
+                uuid: v.uuid || childId
+              });
+            }
+          });
         });
 
         currentDrives = drives;

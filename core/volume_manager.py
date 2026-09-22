@@ -140,7 +140,10 @@ class SSDVolumeManager:
                     or (v.uuid and v.uuid.lower() == clean_target.lower())
                     or (v.name and v.name.lower() == clean_target.lower())
                 ):
-                    return self.adapter.mount_volume(v.device_id)
+                    res = self.adapter.mount_volume(v.device_id)
+                    if res.success:
+                        StateManager.remove_ejected_target(v.device_id)
+                    return res
 
         # 2. Check if target matches drive ID or primary UUID
         for d in drives:
@@ -149,7 +152,12 @@ class SSDVolumeManager:
                 or (d.id.replace("/dev/", "").lower() == clean_target.replace("/dev/", "").lower())
                 or (d.primary_uuid and d.primary_uuid.lower() == clean_target.lower())
             ):
-                return self.adapter.mount_drive(d.id)
+                res = self.adapter.mount_drive(d.id)
+                if res.success:
+                    StateManager.remove_ejected_target(d.id)
+                    for v in d.volumes:
+                        StateManager.remove_ejected_target(v.device_id)
+                return res
 
         # Direct fallback
         import re

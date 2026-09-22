@@ -432,6 +432,38 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertEqual(len(state.get("volume_identifiers", [])), 0)
         self.assertEqual(len(state.get("drive_ids", [])), 0)
 
+    def test_parent_and_child_hierarchy_control(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend Media", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        # 1. Unmounting child disk8s1 unmounts ONLY disk8s1 while disk9s1 is still mounted
+        res_child = volume_mgr.unmount_target("disk8s1")
+        self.assertTrue(res_child.success)
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        # Parent disk7 MUST NOT be ejected yet because disk9s1 is still mounted
+        self.assertNotIn("disk7", adapter.ejected)
+
+        # 2. Mounting child disk8s1 mounts only disk8s1
+        res_mount_child = volume_mgr.mount_target("disk8s1")
+        self.assertTrue(res_mount_child.success)
+        self.assertIn("disk8s1", adapter.mounted_volumes)
+
+        # 3. Unmounting parent disk7 triggers Deep Sleep: unmounts all children and ejects parent disk7
+        res_parent = volume_mgr.unmount_target("disk7")
+        self.assertTrue(res_parent.success)
+        self.assertIn("disk7", adapter.ejected)
+
+        # 4. Mounting parent disk7 mounts the whole physical drive
+        res_mount_parent = volume_mgr.mount_target("disk7")
+        self.assertTrue(res_mount_parent.success)
+        self.assertIn("disk7", adapter.mounted)
+
 
 if __name__ == "__main__":
     unittest.main()

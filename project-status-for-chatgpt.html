@@ -155,7 +155,7 @@
 <body>
 <div class="container">
     <header>
-        <div class="badge badge-pass">ALL 22 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS &bull; LIVE HARDWARE VERIFIED</div>
+        <div class="badge badge-pass">ALL 23 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS &bull; LIVE HARDWARE VERIFIED</div>
         <h1>Safe Drive Ejector Tool &mdash; Confirmed Fix & Project Status</h1>
         <p class="subtitle">Evidence-based verification and engineering report &bull; Generated September 2026</p>
     </header>
@@ -250,6 +250,12 @@
                     <td>If any volume unmount encounters a busy file, parent eject is aborted, preventing data loss. No raw ATA/SCSI power-down commands are used, ensuring SATA bridge reliability.</td>
                     <td><span class="status-tag tag-hardware">DOCUMENTED & BOUNDED</span></td>
                 </tr>
+                <tr>
+                    <td>10</td>
+                    <td><strong>Disk Utility Hierarchy & Controls</strong></td>
+                    <td>Drives enumerated strictly in Disk Utility order: Disk 1 &rarr; <code>disk7</code> (parent), Disk 2 &rarr; <code>disk8s1</code> (child 1), Disk 3 &rarr; <code>disk9s1</code> (child 2). UI displays pure device identifiers. Parent checkbox toggles all children; child toggle synchronizes parent; parent unmount triggers physical Deep Sleep (LED-OFF) while child unmount targets only individual partition.</td>
+                    <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -258,6 +264,17 @@
         <div class="card">
             <h2>Exact Files & Functions Modified</h2>
             <ul>
+                <li><code>core/volume_manager.py</code>:
+                    <ul>
+                        <li><code>deep_sleep_drive(drive_id)</code></li>
+                        <li><code>mount_target(target_id)</code> & <code>unmount_target(target_id)</code></li>
+                    </ul>
+                </li>
+                <li><code>platform_adapters/macos.py</code>:
+                    <ul>
+                        <li>Hardware info cache (<code>_info_cache</code>) to eliminate LED pulsing during UI inspection</li>
+                    </ul>
+                </li>
                 <li><code>core/engine.py</code>:
                     <ul>
                         <li><code>remount_all_ejected(only_if_recorded=True)</code></li>
@@ -275,21 +292,22 @@
                     <ul>
                         <li><code>handleSystemSleep()</code> &rarr; calls <code>idle-sleep</code></li>
                         <li><code>handleSystemWake()</code> &rarr; calls <code>remount-all --only-recorded</code></li>
-                        <li><code>userContentController</code>: <code>case "unmount"</code> with <code>target == "all"</code> routes to <code>idle-sleep</code> instead of <code>eject-now</code></li>
+                        <li><code>userContentController</code>: Added <code>driveSelection</code> handler</li>
                         <li>Registered <code>willPowerOffNotification</code> and <code>willTerminateNotification</code></li>
                         <li>Added <code>window.onOperationStart</code> and <code>window.onOperationComplete</code> dispatch</li>
                     </ul>
                 </li>
                 <li><code>ui/components/SafeDriveEjectorCard.html</code>:
                     <ul>
-                        <li>Removed <code>#diskCountBars</code></li>
-                        <li>Updated <code>syncEjectedCount</code> to output pure numbers</li>
-                        <li>Updated global unmount trigger to start loop with "Safe Unmount"</li>
-                        <li>Implemented animated operation progress indicators</li>
+                        <li>Dynamic Disk Utility hierarchy layout (Disk 1: parent, Disk 2+: children)</li>
+                        <li>Clean system device identifier display (<code>disk7</code>, <code>disk8s1</code>, <code>disk9s1</code>)</li>
+                        <li>Synchronized parent-child checkbox controls</li>
+                        <li>Dynamic unmounted count and Deep Sleep label on parent unmount</li>
                     </ul>
                 </li>
                 <li><code>tests/test_features.py</code>:
                     <ul>
+                        <li>Added <code>test_parent_and_child_hierarchy_control</code></li>
                         <li>Added <code>test_auto_wake_only_recorded_drives</code></li>
                         <li>Added <code>test_legacy_daemon_sleep_uses_safe_unmount</code></li>
                     </ul>
@@ -301,8 +319,8 @@
             <h2>Test Verification Results</h2>
             <pre>
 $ SAFEEJECT_CONFIG_DIR=.tmp_config python3 -m unittest discover tests
-......................
-Ran 22 tests in 0.201s
+.......................
+Ran 23 tests in 0.287s
 OK
 
 $ swiftc -module-cache-path .build/cache -O ui/SafeEjectMenuBar.swift -o bin/SafeEjectMenuBar
@@ -310,6 +328,7 @@ Build exit code: 0 (No warnings, no errors)
             </pre>
             <p><strong>Verified Test Suites:</strong></p>
             <ul>
+                <li><code>test_parent_and_child_hierarchy_control</code> (Pass)</li>
                 <li><code>test_deep_sleep_all_mounted_volumes_unmounted_before_parent_eject</code> (Pass)</li>
                 <li><code>test_deep_sleep_aborted_when_unmount_fails</code> (Pass)</li>
                 <li><code>test_deep_sleep_selective_wake_drive1_and_drive2</code> (Pass)</li>

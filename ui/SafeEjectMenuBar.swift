@@ -556,6 +556,10 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                     }
                 }
             }
+        case "driveSelection":
+            if let driverId = body["driverId"] as? String {
+                runCLICommand(["select-sleep", driverId])
+            }
         case "openURL":
             if let urlStr = body["url"] as? String, let url = URL(string: urlStr) {
                 NSWorkspace.shared.open(url)
