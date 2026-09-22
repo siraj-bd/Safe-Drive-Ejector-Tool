@@ -97,3 +97,22 @@ Exit Code: 0 (Zero warnings, zero errors)
   - Added message handler for `driveSelection` routing to `select-sleep`.
 - `tests/test_features.py`:
   - Added full test coverage for LED-off deep sleep, abort-on-failure, selective wake, state cleanup, and parent/child hierarchy controls (`test_parent_and_child_hierarchy_control`).
+
+---
+
+### Drive Hover Details — Fixed Anchor Positioning (1X to 4X Responsive)
+
+1. **Elimination of Duplicate Tooltips**:
+   - Stripped all native browser/WebKit `title` attributes on driver labels.
+   - Enforced a single, unified, custom HTML hover details popup (`#driveHoverPopup`).
+2. **Fixed Anchor Position Below Drivers List**:
+   - Fixed popup top anchor to start directly below `.drivers-section` (overlaying the Sleep/Awake and lower controls section).
+   - Whichever disk is hovered (`disk7`, `disk8s1`, `disk9s1`), the popup opens at the exact same anchored position.
+   - The hovered disk row, disk identifier, checkboxes, and buttons remain 100% visible and un-obscured at all times.
+   - Zero occlusion of cursor or hovered row.
+3. **Responsive Scaling & Boundaries**:
+   - Bounded strictly within `.card` borders (`left: 6px; right: 6px; width: calc(100% - 12px)`).
+   - Scales and reflows seamlessly across **1X, 1.25X, 1.5X, 2X, 3X, and 4X** modes.
+   - Clean vertical wrapping (`.popup-row.vertical-wrap` with `.val-path`) prevents path truncation or clipping for long mount paths.
+   - Preserves 100% OS-system-derived live metadata (Title, Location, Mount Point, Capacity, Child Count, Media Type).
+

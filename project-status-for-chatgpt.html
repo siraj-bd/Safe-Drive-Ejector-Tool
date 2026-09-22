@@ -289,9 +289,11 @@
                 </li>
                 <li><code>ui/components/SafeDriveEjectorCard.html</code>:
                     <ul>
-                        <li>Added <code>.drive-hover-popup</code> floating card CSS & DOM element</li>
-                        <li>Implemented <code>showDriveHoverPopup</code>, <code>updateDriveHoverPopupPos</code>, <code>hideDriveHoverPopup</code></li>
-                        <li>Attached mouseenter/mousemove/mouseleave listeners to driver rows</li>
+                        <li>Added <code>.drive-hover-popup</code> contained within <code>.card</code> bounds with <code>.popup-row.vertical-wrap</code></li>
+                        <li>Implemented <code>showDriveHoverPopup</code>, <code>positionHoverPopup</code> (fixed anchor directly below Drivers List), <code>hideDriveHoverPopup</code></li>
+                        <li>Removed all native browser <code>title</code> tooltips to enforce a single unified popup</li>
+                        <li>Kept hovered disk row, disk identifier, and cursor 100% visible while overlaying lower settings</li>
+                        <li>Scale-aware coordinate calculations supporting 1X, 1.25X, 1.5X, 2X, 3X, and 4X</li>
                     </ul>
                 </li>
                 <li><code>tests/test_features.py</code>:

@@ -757,27 +757,28 @@
       cursor: pointer;
     }
 
-    /* Drive Hover Details Tooltip Popup */
+    /* Drive Hover Details Tooltip Popup - Strictly Contained Inside .card */
     .drive-hover-popup {
-      position: fixed;
-      z-index: 999999;
+      position: absolute;
+      left: 6px;
+      right: 6px;
+      width: calc(100% - 12px);
+      box-sizing: border-box;
+      z-index: 99999;
       pointer-events: none;
-      background: rgba(14, 18, 26, 0.96);
-      border: 1px solid rgba(255, 65, 65, 0.6);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 0 16px rgba(255, 65, 65, 0.25);
+      background: rgba(12, 16, 24, 0.98);
+      border: 1px solid rgba(255, 65, 65, 0.7);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.85), 0 0 14px rgba(255, 65, 65, 0.35);
       border-radius: 6px;
-      padding: 7px 10px;
+      padding: 5px 7px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 8.5px;
+      font-size: 7.2px;
       color: #e2e8f0;
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      min-width: 170px;
-      max-width: 260px;
-      line-height: 1.45;
       opacity: 0;
       visibility: hidden;
-      transform: translateY(3px);
+      transform: translateY(2px);
       transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
     }
     .drive-hover-popup.visible {
@@ -788,35 +789,49 @@
     .popup-title {
       font-weight: 700;
       color: #ffffff;
-      font-size: 9.5px;
-      margin-bottom: 3px;
-      letter-spacing: 0.2px;
+      font-size: 8px;
+      margin-bottom: 2px;
+      letter-spacing: 0.15px;
       word-break: break-word;
+      line-height: 1.25;
     }
     .popup-divider {
       height: 1px;
-      background: linear-gradient(90deg, rgba(255, 75, 75, 0.8) 0%, rgba(255, 255, 255, 0.15) 100%);
-      margin: 3px 0 5px 0;
+      background: linear-gradient(90deg, rgba(255, 75, 75, 0.9) 0%, rgba(255, 255, 255, 0.15) 100%);
+      margin: 2.5px 0 4px 0;
     }
     .popup-row {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: 8px;
+      gap: 6px;
       margin-bottom: 2px;
+      line-height: 1.35;
     }
     .popup-label {
       color: #94a3b8;
-      font-size: 8px;
+      font-size: 6.8px;
       flex-shrink: 0;
       text-transform: capitalize;
     }
     .popup-val {
       color: #f1f5f9;
       font-weight: 500;
-      font-size: 8.5px;
+      font-size: 7.2px;
       text-align: right;
       word-break: break-all;
+    }
+    .popup-row.vertical-wrap {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1.5px;
+    }
+    .popup-val.val-path {
+      text-align: left;
+      word-break: break-all;
+      font-size: 6.8px;
+      color: #93c5fd;
+      line-height: 1.25;
     }
     .popup-val.val-highlight {
       color: #4ade80;
@@ -1598,6 +1613,9 @@
       <span class="green-accent">Safe Drive</span> <span class="red-accent">Ejector Tool</span>
     </div>
 
+    <!-- Dynamic Drive Hover Details Tooltip Popup (strictly inside .card container) -->
+    <div id="driveHoverPopup" class="drive-hover-popup" style="display: none;"></div>
+
   </div>
 
   <script>
@@ -1807,6 +1825,7 @@
     function changeCardScale(val) {
       const scale = parseFloat(val) || 1.0;
       currentScale = scale;
+      hideDriveHoverPopup();
       localStorage.setItem("SafeDriveEjector_CardScale", scale);
 
       const select = document.getElementById("cardScaleSelect");
@@ -1935,12 +1954,11 @@
         .replace(/'/g, "&#039;");
     }
 
-    function showDriveHoverPopup(drive, event) {
+    function showDriveHoverPopup(drive, rowId) {
       const popup = document.getElementById("driveHoverPopup");
       if (!popup) return;
       if (!drive || !drive.meta) {
-        popup.classList.remove("visible");
-        popup.style.display = "none";
+        hideDriveHoverPopup();
         return;
       }
       const meta = drive.meta;
@@ -1956,7 +1974,10 @@
         const mountLabel = meta.drive_letter ? "Mount Path:" : "Mount Point:";
         html += `
           ${meta.drive_letter ? `<div class="popup-row"><span class="popup-label">Drive Letter:</span><span class="popup-val">${escapeHtml(meta.drive_letter)}</span></div>` : ''}
-          <div class="popup-row"><span class="popup-label">${mountLabel}</span><span class="popup-val">${escapeHtml(meta.mount_point)}</span></div>
+          <div class="popup-row vertical-wrap">
+            <span class="popup-label">${mountLabel}</span>
+            <span class="popup-val val-path">${escapeHtml(meta.mount_point)}</span>
+          </div>
           <div class="popup-row"><span class="popup-label">Capacity:</span><span class="popup-val val-highlight">${escapeHtml(meta.capacity)}</span></div>
           <div class="popup-row"><span class="popup-label">Type:</span><span class="popup-val val-type">${escapeHtml(meta.type)}</span></div>
         `;
@@ -1964,31 +1985,28 @@
       popup.innerHTML = html;
       popup.style.display = "block";
       popup.classList.add("visible");
-      updateDriveHoverPopupPos(event);
+
+      positionHoverPopup();
     }
 
-    function updateDriveHoverPopupPos(event) {
+    function positionHoverPopup() {
       const popup = document.getElementById("driveHoverPopup");
-      if (!popup || !popup.classList.contains("visible")) return;
-      const pad = 10;
-      let x = (event.clientX || 0) + 14;
-      let y = (event.clientY || 0) - 10;
-      
-      const pw = popup.offsetWidth || 190;
-      const ph = popup.offsetHeight || 90;
-      const winW = window.innerWidth;
-      const winH = window.innerHeight;
+      const cardElem = document.querySelector(".card");
+      const driversSec = document.querySelector(".drivers-section");
+      if (!popup || !cardElem || !driversSec) return;
 
-      if (x + pw > winW - pad) {
-        x = Math.max(pad, (event.clientX || 0) - pw - 14);
-      }
-      if (y + ph > winH - pad) {
-        y = Math.max(pad, winH - ph - pad);
-      }
-      if (y < pad) y = pad;
+      const cardRect = cardElem.getBoundingClientRect();
+      const driversRect = driversSec.getBoundingClientRect();
+      const scale = currentScale || 1.0;
 
-      popup.style.left = `${x}px`;
-      popup.style.top = `${y}px`;
+      // Fixed anchor position: directly below Drivers List (above Sleep controls)
+      // Whichever disk is hovered, popup appears at this exact anchor spot.
+      // This ensures all Drivers List rows, names, and cursor remain 100% visible!
+      let fixedTop = Math.round((driversRect.bottom - cardRect.top) / scale + 2);
+      if (isNaN(fixedTop) || fixedTop <= 0) {
+        fixedTop = Math.round(driversSec.offsetTop + driversSec.offsetHeight + 2);
+      }
+      popup.style.top = `${fixedTop}px`;
     }
 
     function hideDriveHoverPopup() {
@@ -2008,43 +2026,30 @@
         const wrapElem = nameElem ? nameElem.closest('.driver-name-wrap') : null;
 
         if (nameElem) {
+          // Strictly remove title attribute to prevent duplicate browser/OS tooltip!
+          nameElem.removeAttribute("title");
+          if (wrapElem) wrapElem.removeAttribute("title");
+
           if (drive) {
             // Strictly System Device Identifier (e.g. "disk7", "disk8s1", "disk9s1", "PhysicalDrive1", "E:")
             const devId = (drive.id || drive.device_id || `disk${slotNum}`).replace(/^\/dev\//, '');
             nameElem.textContent = devId;
-            const meta = drive.meta;
-            if (meta) {
-              if (meta.is_parent) {
-                nameElem.title = `${meta.title}\n• Location: ${meta.location}\n• Capacity: ${meta.capacity}\n• Child Count: ${meta.child_count}\n• Type: ${meta.type}`;
-              } else {
-                const mountLabel = meta.drive_letter ? "Mount Path" : "Mount Point";
-                const letterStr = meta.drive_letter ? `\n• Drive Letter: ${meta.drive_letter}` : "";
-                nameElem.title = `${meta.title}${letterStr}\n• ${mountLabel}: ${meta.mount_point}\n• Capacity: ${meta.capacity}\n• Type: ${meta.type}`;
-              }
-            } else {
-              nameElem.title = `${devId} [Slot #${slotNum}]`;
-            }
 
-            // Bind interactive hover popup handlers
+            // Bind single interactive hover popup
             if (wrapElem) {
               wrapElem.style.cursor = "pointer";
-              wrapElem.onmouseenter = function(e) {
-                showDriveHoverPopup(drive, e);
+              wrapElem.onmouseenter = function() {
+                showDriveHoverPopup(drive, i);
               };
-              wrapElem.onmousemove = function(e) {
-                updateDriveHoverPopupPos(e);
-              };
-              wrapElem.onmouseleave = function(e) {
+              wrapElem.onmouseleave = function() {
                 hideDriveHoverPopup();
               };
             }
           } else {
             nameElem.textContent = `disk${slotNum}`;
-            nameElem.title = `disk${slotNum} (No drive detected)`;
             if (wrapElem) {
               wrapElem.style.cursor = "default";
               wrapElem.onmouseenter = null;
-              wrapElem.onmousemove = null;
               wrapElem.onmouseleave = null;
             }
           }
@@ -2331,16 +2336,22 @@
       if (!window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.safeEjectBridge) {
         window.updateUIState({
           external_drives: [
-            { id: "disk7", name: "Transcend", volumes: [
-              { device_id: "disk3s1", name: "backup-software", is_mounted: true },
-              { device_id: "disk6s1", name: "iOS 27.0 Simulator", is_mounted: false },
-              { device_id: "disk8s1", name: "support-external-drive", is_mounted: true },
-              { device_id: "disk9s1", name: "Macbook Backup", is_mounted: true },
-              { device_id: "disk10s1", name: "USBTest", is_mounted: false },
-              { device_id: "disk11s1", name: "Samsung T7", is_mounted: true },
-              { device_id: "disk12s1", name: "Extreme SSD 1TB", is_mounted: true },
-              { device_id: "disk13s1", name: "Work Docs", is_mounted: false }
-            ]}
+            {
+              id: "disk7",
+              name: "StoreJet Transcend Media",
+              location: "External",
+              decimal_size: "480.1 GB",
+              child_count: 3,
+              media_type: "Solid state",
+              volumes: [
+                { device_id: "disk8s1", name: "support-external-drive", mount_point: "/Volumes/support-external-drive", decimal_size: "200.39 GB", type_desc: "APFS Volume", is_mounted: true },
+                { device_id: "disk9s1", name: "Macbook Backup", mount_point: "/Volumes/Macbook Backup", decimal_size: "279.5 GB", type_desc: "APFS Volume", is_mounted: true },
+                { device_id: "disk10s1", name: "USBTest", mount_point: "/Volumes/USBTest", decimal_size: "500 MB", type_desc: "FAT32", is_mounted: false },
+                { device_id: "disk11s1", name: "Samsung T7", mount_point: "/Volumes/Samsung T7", decimal_size: "1.0 TB", type_desc: "APFS Volume", is_mounted: true },
+                { device_id: "disk12s1", name: "Extreme SSD 1TB", mount_point: "/Volumes/Extreme SSD 1TB", decimal_size: "1.0 TB", type_desc: "APFS Volume", is_mounted: true },
+                { device_id: "disk13s1", name: "Work Docs", mount_point: "/Volumes/Work Docs", decimal_size: "256 GB", type_desc: "ExFAT", is_mounted: false }
+              ]
+            }
           ]
         });
       }
@@ -2467,8 +2478,5 @@
       }
     };
   </script>
-
-  <!-- Dynamic Drive Hover Details Tooltip Popup -->
-  <div id="driveHoverPopup" class="drive-hover-popup" style="display: none;"></div>
 </body>
 </html>
