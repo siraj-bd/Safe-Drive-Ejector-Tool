@@ -258,13 +258,14 @@
       position: relative;
     }
 
-    /* Pager Zone: Positioned on the left of Status title, aligned with checkbox column */
+    /* Pager Zone: Positioned on the left of Status title, shifted slightly down */
     .status-pager-zone {
       position: absolute;
-      left: 7px;
-      bottom: 2px;
-      width: 40px;
-      height: 35px;
+      left: 8px;
+      top: calc(50% + 1.5px);
+      transform: translateY(-50%);
+      width: 26px;
+      height: 26px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -410,13 +411,14 @@
       flex-direction: column;
       align-items: flex-start;
       justify-content: center;
-      gap: 1.5px;
+      gap: 1px;
     }
 
     .status-processing-text {
-      font-size: 7.2px;
+      font-size: 5.6px;
       color: #ffffff;
       font-weight: 600;
+      letter-spacing: 0.1px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -425,14 +427,14 @@
     }
 
     .status-mode-text {
-      font-size: 6.8px;
-      color: #ffffff;
+      font-size: 5.0px;
+      color: rgba(255, 255, 255, 0.85);
       font-weight: 400;
+      letter-spacing: 0.1px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       line-height: 1.15;
-      opacity: 0.92;
       text-align: left;
     }
 
@@ -496,16 +498,42 @@
       height: 100%;
     }
 
+    /* ==========================================================================
+       PAGER BUTTON (From Uiverse.io by Zaikonurami / Zaiko / Aaron Iker)
+       Color: Green (#22c55e), compact text, smooth 45deg rotation on expand
+       ========================================================================== */
+    :root {
+      --button-color: #22c55e;
+      --icons-color: #ffffff;
+      --plus-color: #ffffff;
+      --scale: 1;
+    }
+
+    .add-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* --- Button --- */
     .add {
-      width: 17px;
-      height: 17px;
+      width: 84px;
+      height: 84px;
       position: relative;
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      grid-template-rows: repeat(2, 1fr);
-      gap: 0px;
-      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      grid-template-columns: 42px 42px;
+      grid-template-rows: 42px 42px;
+      grid-auto-flow: column;
+      transform: scale(0.195);
+      transform-origin: 50% 50%;
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
       cursor: pointer;
+      z-index: 60;
+      flex-shrink: 0;
+      box-sizing: border-box;
     }
 
     .add a {
@@ -513,108 +541,166 @@
       align-items: center;
       justify-content: center;
       position: relative;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(135deg, #ff1a1a 0%, #b91c1c 100%);
+      width: 42px;
+      height: 42px;
+      box-sizing: border-box;
+      background: var(--button-color, #22c55e);
       -webkit-backface-visibility: hidden;
       backface-visibility: hidden;
+      transition:
+        border-radius 0.3s ease,
+        transform 0.2s ease,
+        background 0.2s ease;
       text-decoration: none;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-      box-sizing: border-box;
     }
 
     .add a .pager-text {
-      display: block;
-      font-size: 8.5px;
-      font-weight: 900;
-      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 100%;
+      height: 100%;
+      margin: 0;
       opacity: 0;
-      transition: opacity 0.15s ease;
-      -webkit-backface-visibility: hidden;
-      backface-visibility: hidden;
-      pointer-events: none;
+      color: var(--icons-color, #ffffff);
+      font-size: 23px;
+      font-weight: 900;
       line-height: 1;
       text-align: center;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
-      letter-spacing: -0.2px;
       white-space: nowrap;
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(0.6) rotate(-45deg);
+      transition: all 0.15s ease;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
     }
 
-    /* Corner Radii in Collapsed State: Forms a unified rounded rectangle */
-    .add a:nth-child(1) { border-radius: 3.5px 0 0 0; }
-    .add a:nth-child(2) { border-radius: 0 3.5px 0 0; }
-    .add a:nth-child(3) { border-radius: 0 0 0 3.5px; }
-    .add a:nth-child(4) { border-radius: 0 0 3.5px 0; }
+    /* Corner Radii */
+    .add a:nth-child(1) {
+      border-radius: 8px 0 0 0;
+    }
+    .add a:nth-child(2) {
+      border-radius: 0 0 0 8px;
+    }
+    .add a:nth-child(3) {
+      border-radius: 0 8px 0 0;
+    }
+    .add a:nth-child(4) {
+      border-radius: 0 0 8px 0;
+    }
 
-    /* The Plus Sign (+) centered on collapsed button */
+    /* The Plus Sign (+) */
     .add:before,
     .add:after {
       content: "";
-      background: #ffffff;
+      width: 30px;
+      height: 7px;
+      border-radius: 3.5px;
+      background: var(--plus-color, #ffffff);
       position: absolute;
       left: 50%;
       top: 50%;
       display: block;
-      z-index: 10;
-      transform: translate(-50%, -50%);
+      z-index: 1;
       transform-origin: 50% 50%;
-      transition: opacity 0.15s ease, transform 0.15s ease;
+      transition:
+        transform 0.25s ease,
+        opacity 0.25s ease;
       pointer-events: none;
     }
 
     .add:before {
-      width: 9px;
-      height: 2px;
-      border-radius: 1px;
+      transform: translate(-50%, -50%) scaleY(0.76);
     }
 
     .add:after {
-      width: 2px;
-      height: 9px;
-      border-radius: 1px;
+      transform: translate(-50%, -50%) rotate(90deg) scaleY(0.76);
     }
 
-    /* --- Expanded State: Large, Clear, and Beautifully Legible (Row 1: 1st, 2nd | Row 2: 3rd, 4th) --- */
-    .add.expanded,
-    .add:hover {
-      width: 38px;
-      height: 34px;
-      gap: 3px 3.5px;
+    /* --- Hover State (Expanded: Contained strictly within status zone) --- */
+    .add:hover,
+    .add.expanded {
+      transform: scale(0.255) rotate(45deg);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s;
       z-index: 100;
     }
 
-    .add.expanded:before,
-    .add.expanded:after,
     .add:hover:before,
-    .add:hover:after {
+    .add:hover:after,
+    .add.expanded:before,
+    .add.expanded:after {
       opacity: 0;
-      transform: translate(-50%, -50%) scale(0);
+      transform: translate(-50%, -50%) rotate(0deg) scale(0);
+      transition:
+        transform 0.15s ease,
+        opacity 0.15s ease;
     }
 
-    .add.expanded a,
-    .add:hover a {
-      width: 17px;
-      height: 15.5px;
-      border-radius: 50%;
-      box-shadow: 0 1.5px 4px rgba(0, 0, 0, 0.85);
+    .add:hover a,
+    .add.expanded a {
+      --scale: 1;
       pointer-events: auto;
+      border-radius: 50%;
+      animation: pointerEvent 0s linear forwards 0.35s;
+      transition:
+        border-radius 0.15s ease 0.08s,
+        transform 0.22s ease 0.12s;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
     }
 
-    .add.expanded a .pager-text,
-    .add:hover a .pager-text {
+    /* Transform */
+    .add:hover a:nth-child(1),
+    .add.expanded a:nth-child(1) {
+      transform: translate(-5px, -5px) scale(var(--scale));
+    }
+    .add:hover a:nth-child(2),
+    .add.expanded a:nth-child(2) {
+      transform: translate(-5px, 5px) scale(var(--scale));
+    }
+    .add:hover a:nth-child(3),
+    .add.expanded a:nth-child(3) {
+      transform: translate(5px, -5px) scale(var(--scale));
+    }
+    .add:hover a:nth-child(4),
+    .add.expanded a:nth-child(4) {
+      transform: translate(5px, 5px) scale(var(--scale));
+    }
+
+    .add:hover a .pager-text,
+    .add.expanded a .pager-text {
       opacity: 1;
-      transform: none;
+      transition: all 0.25s ease 0.15s;
+      transform: translate(-50%, -50%) scale(1) rotate(-45deg);
     }
 
-    .add a:hover {
-      background: #38bdf8 !important;
-      box-shadow: 0 0 6px rgba(56, 189, 248, 0.95) !important;
-      z-index: 20;
+    .add:hover a:hover,
+    .add.expanded a:hover {
+      --scale: 0.92;
+      background: #16a34a !important;
+      transition:
+        border-radius 0.2s ease 0.1s,
+        transform 0.25s ease 0s;
+    }
+
+    .add:hover a:hover .pager-text,
+    .add.expanded a:hover .pager-text {
+      opacity: 1;
+      transition: all 0.3s ease 0s;
     }
 
     .add a.active {
-      background: #22c55e !important;
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.9) !important;
+      background: #15803d !important;
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.9) !important;
+    }
+
+    @keyframes pointerEvent {
+      100% {
+        pointer-events: auto;
+      }
     }
 
     .driver-row {
@@ -933,6 +1019,7 @@
       display: block;
     }
 
+    .count-bars[data-count="0"] .bar { display: none; }
     .count-bars[data-count="1"] .bar:nth-child(n+2) { display: none; }
     .count-bars[data-count="2"] .bar:nth-child(n+3) { display: none; }
     .count-bars[data-count="3"] .bar:nth-child(n+4) { display: none; }
@@ -940,16 +1027,84 @@
     .count-bars[data-count="all"] .bar { display: block; }
 
     /* ==========================================================================
-       LOGOUT BUTTON (bad-termite-94 by TomMussard) - Pushed Inside Away from Border
+       3D RAISED CHROME TEXT WATERMARK (matching user image "GET STARTED")
+       Directly on card background (no box), heavy 3D extrusion, dark perimeter,
+       warm metallic under-rim reflection, and smooth shine sweep loop.
        ========================================================================== */
+    /* ==========================================================================
+       SIRAJ-BD WATERMARK (Deep-Punched Metal Carving matching media_1790034518171.png)
+       Straight front-facing, deeply punched into card surface, silver inside,
+       crisp silver-beveled bottom edge, top drop-in shadow, NO outer box.
+       ========================================================================== */
+    @keyframes punchedSilverShine {
+      0% {
+        background-position: 100% 0;
+      }
+      100% {
+        background-position: -100% 0;
+      }
+    }
+
     .logout-cell {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: space-between;
       width: 100%;
       height: 19px;
+      padding-left: 2px;
       padding-right: 1px;
       box-sizing: border-box;
+    }
+
+    /* Clean container - strictly NO side borders, NO box */
+    .punched-watermark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      padding: 0;
+      margin: 0;
+      text-decoration: none;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      transition: transform 0.2s ease;
+    }
+
+    .punched-watermark:hover {
+      transform: scale(1.04);
+    }
+
+    /* Deep-punched straight front-facing text (matching reference image) */
+    .punched-text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.35px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      /* Inside the cut: brushed silver with smooth shine sweep */
+      background: linear-gradient(
+        to right,
+        #4b515d 0%,
+        #71717a 25%,
+        #cbd5e1 45%,
+        #ffffff 50%,
+        #cbd5e1 55%,
+        #71717a 75%,
+        #4b515d 100%
+      );
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: punchedSilverShine 3.5s linear infinite;
+      /* Exact deep punch bevel: dark overhang shadow on top, razor-sharp silver highlight rim on bottom */
+      filter: drop-shadow(0 -1.2px 0.5px #000000)
+              drop-shadow(0 1px 0 rgba(255, 255, 255, 0.55));
     }
 
     .Btn-logout {
@@ -967,20 +1122,23 @@
       box-shadow: 1px 1px 5px rgba(0, 0, 0, 0.35);
       background-color: rgb(255, 65, 65);
       flex-shrink: 0;
+      margin-left: auto;
     }
 
     /* sign */
     .Btn-logout .sign {
       width: 100%;
+      height: 100%;
       transition-duration: .3s;
       display: flex;
       align-items: center;
       justify-content: center;
+      flex-shrink: 0;
     }
 
     .Btn-logout .sign svg {
-      width: 7.5px;
-      height: 7.5px;
+      width: 7px;
+      height: 7px;
     }
 
     .Btn-logout .sign svg path {
@@ -990,39 +1148,42 @@
     /* text */
     .Btn-logout .text-logout {
       position: absolute;
-      right: 0%;
-      width: 0%;
+      right: 2px;
+      width: 0;
       opacity: 0;
       color: white;
-      font-size: 6.5px;
-      font-weight: 600;
+      font-size: 6.2px;
+      font-weight: 700;
+      letter-spacing: -0.1px;
       transition-duration: .3s;
       white-space: nowrap;
       overflow: hidden;
+      line-height: 1;
     }
 
-    /* hover effect on button width */
+    /* hover effect on button width - compact 35px */
     .Btn-logout:hover,
     .Btn-logout.expanded {
-      width: 52px;
+      width: 35px;
       border-radius: 7.5px;
       transition-duration: .3s;
     }
 
     .Btn-logout:hover .sign,
     .Btn-logout.expanded .sign {
-      width: 32%;
+      width: 11px;
       transition-duration: .3s;
-      padding-left: 2px;
+      padding-left: 2.5px;
+      justify-content: flex-start;
     }
 
-    /* hover effect button's text */
+    /* hover effect button's text - snug fit right next to icon */
     .Btn-logout:hover .text-logout,
     .Btn-logout.expanded .text-logout {
       opacity: 1;
-      width: 68%;
+      width: calc(100% - 13.5px);
       transition-duration: .3s;
-      padding-right: 3px;
+      padding-right: 2px;
       text-align: center;
     }
 
@@ -1307,14 +1468,15 @@
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
           <span class="control-title">Ejected</span>
-          <span class="count-bars" id="diskCountBars" data-count="1" title="Selected disk count">
+          <span class="count-bars" id="diskCountBars" data-count="0" title="Selected disk count">
             <span class="bar"></span>
             <span class="bar"></span>
             <span class="bar"></span>
             <span class="bar"></span>
           </span>
           <select class="custom-select" id="ejectedDiskSelect" onchange="updateDiskCountBars(this.value)">
-            <option value="1" selected>1</option>
+            <option value="0" selected>0</option>
+            <option value="1">1</option>
             <option value="2">2</option>
             <option value="3">3</option>
             <option value="4">4</option>
@@ -1380,8 +1542,14 @@
         </div>
       </div>
 
-      <!-- LOGOUT BUTTON (bad-termite-94 by TomMussard) - Round by default, expands on click / hover -->
+      <!-- LOGOUT BUTTON & DEEP-PUNCHED SIRAJ-BD WATERMARK (matching user image) -->
       <div class="logout-cell">
+        <a href="javascript:void(0)"
+           onclick="openExternalURL('https://github.com/siraj-bd', event)"
+           class="punched-watermark"
+           title="Developer & Maintainer: Siraj-BD (Click to visit GitHub)">
+          <span class="punched-text">Siraj-BD</span>
+        </a>
         <button class="Btn-logout" id="logoutBtn" onclick="handleLogoutClick(event)" title="Logout">
           <div class="sign">
             <svg viewBox="0 0 512 512">
@@ -1559,7 +1727,7 @@
       if (modeElem) modeElem.textContent = subMsg;
 
       playAudioFeedback("success");
-      updateEjectedCountDisplay();
+      syncEjectedCount();
 
       clearTimeout(statusHoldTimer);
       statusHoldTimer = setTimeout(() => {
@@ -1842,20 +2010,48 @@
       postToHost({ action: "ejectNow", drivers: checkedIds });
     }
 
-    let ejectedDrivesCount = 0;
-    function updateEjectedCountDisplay() {
-      ejectedDrivesCount = Math.min(4, ejectedDrivesCount + 1);
-      const select = document.getElementById("ejectedDiskSelect");
-      if (select) {
-        select.value = String(ejectedDrivesCount);
-        updateDiskCountBars(select.value);
-      }
-    }
-
     function updateDiskCountBars(val) {
       const bars = document.getElementById("diskCountBars");
       if (bars) {
-        bars.setAttribute("data-count", val);
+        bars.setAttribute("data-count", String(val).toLowerCase());
+      }
+    }
+
+    function syncEjectedCount(overrideCount = null) {
+      const select = document.getElementById("ejectedDiskSelect");
+      const checkElem = document.getElementById("ejectedDiskCheck");
+      if (!select) return;
+
+      let actualCount = 0;
+      if (typeof overrideCount === "number") {
+        actualCount = Math.max(0, overrideCount);
+      } else {
+        // Real dynamic calculation: count how many drives in currentDrives have mounted === false
+        if (currentDrives && currentDrives.length > 0) {
+          actualCount = currentDrives.filter(d => d.mounted === false).length;
+        }
+      }
+
+      let val = "0";
+      if (actualCount === 0) {
+        val = "0";
+      } else if (currentDrives && currentDrives.length > 0 && actualCount >= currentDrives.length) {
+        val = "all";
+      } else if (actualCount >= 4) {
+        val = "4";
+      } else {
+        val = String(actualCount);
+      }
+
+      select.value = val;
+      updateDiskCountBars(val);
+
+      if (checkElem) {
+        if (actualCount > 0) {
+          checkElem.classList.remove("unchecked");
+        } else {
+          checkElem.classList.add("unchecked");
+        }
       }
     }
 
@@ -1978,13 +2174,14 @@
         renderDriveNames();
       }
 
-      if (state.ejectedCount !== undefined) {
-        const select = document.getElementById("ejectedDiskSelect");
-        if (select) {
-          select.value = String(state.ejectedCount);
-          updateDiskCountBars(state.ejectedCount);
-        }
+      if (state.ejected_count !== undefined) {
+        syncEjectedCount(state.ejected_count);
+      } else if (state.ejectedCount !== undefined) {
+        syncEjectedCount(state.ejectedCount);
+      } else {
+        syncEjectedCount();
       }
+
       if (state.sleepTimer) {
         const timerSelect = document.getElementById("sleepTimerSelect");
         if (timerSelect) timerSelect.value = state.sleepTimer;

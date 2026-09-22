@@ -22,7 +22,36 @@ def handle_json_status():
     engine = SafeEjectEngine()
     ext_drives = engine.get_external_drives()
     managed_drives = engine.get_managed_drives()
+
+    # Calculate actual real-time ejected/unmounted count
+    ejected_count = 0
+    currently_mounted_ids = set()
+    for d in ext_drives:
+        has_real_volumes = False
+        for v in d.volumes:
+            if v.name == "EFI" or v.fs_type == "Apple_APFS":
+                continue
+            has_real_volumes = True
+            if v.is_mounted:
+                currently_mounted_ids.add(v.device_id)
+            else:
+                ejected_count += 1
+        if not has_real_volumes and d.name:
+            if getattr(d, "is_mounted", True):
+                currently_mounted_ids.add(d.id)
+            else:
+                ejected_count += 1
+
     state = StateManager.load_ejected_drives()
+    # Clean up any state entries for drives/volumes that are currently mounted
+    active_ejected_vols = [vid for vid in state.get("volume_identifiers", []) if vid not in currently_mounted_ids]
+    if len(active_ejected_vols) != len(state.get("volume_identifiers", [])):
+        if not active_ejected_vols:
+            StateManager.clear_ejected_drives()
+            state = {"drive_ids": [], "volume_identifiers": []}
+        else:
+            state["volume_identifiers"] = active_ejected_vols
+            StateManager.save_ejected_drives(state.get("drive_ids", []), active_ejected_vols)
 
     data = {
         "platform": sys.platform,
@@ -30,6 +59,7 @@ def handle_json_status():
         "sleep_timer_label": engine.config.sleep_timer_label,
         "bottom_status": engine.get_bottom_status(),
         "ejected_state": state,
+        "ejected_count": ejected_count,
         "external_drives": [d.to_dict() for d in ext_drives],
         "managed_drives": [d.to_dict() for d in managed_drives],
     }

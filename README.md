@@ -12,6 +12,12 @@
 
 [Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [UI Overview](#ui-overview) • [Configuration](#configuration) • [Contributing](#contributing)
 
+<br />
+
+<p align="center">
+  <img src="assets/preview.png" alt="Safe Drive Ejector Tool Preview" width="310" />
+</p>
+
 </div>
 
 ---
@@ -129,10 +135,10 @@ The floating menu bar card provides full control over your storage environment:
 | [ ] All                   [ Mount ] [ Unmount]|
 +-----------------------------------------------+
 |  (⏰) Sleep [ 5m ]         (🌙) Awake     [ ]  |
-|  (✓) Ejected [ 1 ]         (▲) Eject Now      |
+|  ( ) Ejected [ 0 ]         (▲) Eject Now      |
 |  (✓) Start At Login        (↻) Update         |
 |  (✓) Before Sleep          (ℹ) About          |
-|  (✓) Before Logout                        [🚪]|
+|  (✓) Before Logout         Siraj-BD       [⎋] |
 +-----------------------------------------------+
 |           Safe Drive Ejector Tool             |
 +-----------------------------------------------+

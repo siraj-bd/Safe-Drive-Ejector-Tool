@@ -239,13 +239,16 @@ class StateManager:
 
     @classmethod
     def save_ejected_drives(cls, drive_ids: List[str], volume_identifiers: List[str]) -> None:
-        state_path = cls.get_state_file()
-        data = {
-            "drive_ids": drive_ids,
-            "volume_identifiers": volume_identifiers,
-        }
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
+        try:
+            state_path = cls.get_state_file()
+            data = {
+                "drive_ids": drive_ids,
+                "volume_identifiers": volume_identifiers,
+            }
+            with open(state_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            pass
 
     @classmethod
     def load_ejected_drives(cls) -> Dict[str, List[str]]:
