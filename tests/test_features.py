@@ -267,6 +267,25 @@ class TestFunctionalFeatures(unittest.TestCase):
         cleared_state = StateManager.load_ejected_drives()
         self.assertEqual(cleared_state.get("volume_identifiers", []), [])
 
+    def test_open_volume_and_sleep_system(self):
+        from unittest.mock import patch
+        adapter = FeatureMockAdapter()
+        vol = VolumeInfo(device_id="disk8s1", name="SanDisk", mount_point="/Volumes/SanDisk", is_mounted=True)
+        drive = DriveInfo(id="disk8", name="SanDisk Ultra", is_external=True, volumes=[vol])
+        adapter.drives = [drive]
+        engine = SafeEjectEngine(adapter=adapter)
+
+        with patch("subprocess.run") as mock_subproc, patch("os.path.exists", return_value=True):
+            # Test open_volume does not raise NameError
+            opened = engine.open_volume("SanDisk")
+            self.assertTrue(opened)
+            mock_subproc.assert_called()
+
+            # Test sleep_system does not raise NameError
+            slept = engine.sleep_system()
+            self.assertTrue(slept)
+
 
 if __name__ == "__main__":
     unittest.main()
+
