@@ -75,7 +75,7 @@ class MacOSAdapter(PlatformAdapter):
                 mount_pt = part.get("MountPoint")
                 fs = part.get("Content", "")
 
-                if dev_id:
+                if dev_id and fs != "Apple_APFS":
                     volumes.append(
                         VolumeInfo(
                             device_id=dev_id,

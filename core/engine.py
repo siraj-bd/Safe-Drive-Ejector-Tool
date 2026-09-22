@@ -59,9 +59,9 @@ class SafeEjectEngine:
         managed = self.get_managed_drives()
         return self.idle_monitor.get_status_summary(managed)
 
-    def eject_now(self) -> List[EjectResult]:
-        """Immediate 1-click safe ejection of all managed drives."""
-        results = self.volume_manager.eject_now()
+    def eject_now(self, targets: Optional[List[str]] = None) -> List[EjectResult]:
+        """Immediate 1-click safe ejection of managed drives or selected targets."""
+        results = self.volume_manager.eject_now(targets=targets)
         success = any(r.success for r in results)
         if success:
             self.volume_manager.play_sound(self.config.success_sound)

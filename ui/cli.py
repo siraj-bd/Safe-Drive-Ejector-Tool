@@ -140,17 +140,21 @@ def cmd_eject_all(engine: SafeEjectEngine, args):
 
 
 def cmd_eject_single(engine: SafeEjectEngine, args):
-    """Eject a specific drive or volume."""
-    target = args.target
-    print(f"\nEjecting '{target}'...")
-    res = engine.eject_single(target)
-    icon = "✓" if res.success else "✗"
-    print(f" {icon} {res.message}\n")
-    if res.blocking_processes:
-        print(f"Blocking processes ({len(res.blocking_processes)}):")
-        for p in res.blocking_processes:
-            print(f"  - {p}")
-        print()
+    """Eject specific drive(s) or volume(s)."""
+    raw_targets = getattr(args, "targets", None) or [getattr(args, "target", "")]
+    targets = raw_targets if isinstance(raw_targets, list) else [raw_targets]
+    for target in targets:
+        if not target:
+            continue
+        print(f"\nEjecting '{target}'...")
+        res = engine.eject_single(target)
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.message}\n")
+        if res.blocking_processes:
+            print(f"Blocking processes ({len(res.blocking_processes)}):")
+            for p in res.blocking_processes:
+                print(f"  - {p}")
+            print()
 
 
 def cmd_remount_all(engine: SafeEjectEngine, args):
@@ -176,12 +180,16 @@ def cmd_remount_all(engine: SafeEjectEngine, args):
 
 
 def cmd_remount_single(engine: SafeEjectEngine, args):
-    """Remount a single drive or volume."""
-    target = args.target
-    print(f"\nRemounting '{target}'...")
-    res = engine.remount_single(target)
-    icon = "✓" if res.success else "✗"
-    print(f" {icon} {res.message}\n")
+    """Remount single or multiple drives/volumes."""
+    raw_targets = getattr(args, "targets", None) or [getattr(args, "target", "")]
+    targets = raw_targets if isinstance(raw_targets, list) else [raw_targets]
+    for target in targets:
+        if not target:
+            continue
+        print(f"\nRemounting '{target}'...")
+        res = engine.remount_single(target)
+        icon = "✓" if res.success else "✗"
+        print(f" {icon} {res.message}\n")
 
 
 def cmd_daemon(engine: SafeEjectEngine, args):
@@ -202,7 +210,20 @@ def cmd_daemon(engine: SafeEjectEngine, args):
 
 
 def cmd_eject_now(engine: SafeEjectEngine, args):
-    """Eject Now Logic: immediately safely unmounts and ejects all managed drives."""
+    """Eject Now Logic: immediately safely unmounts and ejects all managed drives or specific selected targets."""
+    targets = getattr(args, "targets", None)
+    if targets:
+        print(f"\n[Eject Now] Ejecting/unmounting {len(targets)} selected target(s): {', '.join(targets)}")
+        success_count = 0
+        for t in targets:
+            res = engine.eject_single(t)
+            icon = "✓" if res.success else "✗"
+            print(f" {icon} {t}: {res.message}")
+            if res.success:
+                success_count += 1
+        print(f"\nCompleted: {success_count}/{len(targets)} targets safely processed.\n")
+        return
+
     managed = engine.get_managed_drives()
     if not managed:
         print("\nNo managed external drives are currently connected.\n")
@@ -396,22 +417,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--check-locks", "-l", action="store_true", help="Scan for active file locks on mounted volumes")
 
     # eject-now
-    subparsers.add_parser("eject-now", help="Immediately safely eject all managed external drives")
+    p_eject_now = subparsers.add_parser("eject-now", help="Immediately safely eject all managed external drives or specific targets")
+    p_eject_now.add_argument("targets", nargs="*", help="Optional specific drive or volume identifiers to eject")
 
     # eject-all
     p_eject_all = subparsers.add_parser("eject-all", help="Safely eject all external physical drives")
     p_eject_all.add_argument("--dry-run", action="store_true", help="Simulate without actually unmounting")
 
-    # eject <target>
-    p_eject = subparsers.add_parser("eject", help="Eject a specific disk or volume")
-    p_eject.add_argument("target", help="Disk identifier (e.g. disk7) or volume name/mountpoint")
+    # eject <targets>
+    p_eject = subparsers.add_parser("eject", help="Eject specific disk(s) or volume(s)")
+    p_eject.add_argument("targets", nargs="+", help="Disk identifier(s) (e.g. disk8s1) or volume name/mountpoint")
 
     # remount-all
     subparsers.add_parser("remount-all", help="Remount previously ejected drives")
 
-    # remount <target>
-    p_remount = subparsers.add_parser("remount", help="Remount a specific drive or volume")
-    p_remount.add_argument("target", help="Disk identifier or volume name")
+    # remount <targets>
+    p_remount = subparsers.add_parser("remount", help="Remount specific drive(s) or volume(s)")
+    p_remount.add_argument("targets", nargs="+", help="Disk identifier(s) or volume name")
 
     # timer <preset>
     p_timer = subparsers.add_parser("timer", help="Set idle sleep timer preset (2m, 5m, 10m, 15m, 30m, 1h, 2h, never)")

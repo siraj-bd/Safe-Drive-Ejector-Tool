@@ -271,20 +271,31 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         switch action {
         case "mount":
             let target = body["target"] as? String ?? (body["driverId"] != nil ? "\(body["driverId"]!)" : "all")
-            if target == "all" {
+            let drivers = body["drivers"] as? [String] ?? []
+            if (target == "all" || target == "checked") && !drivers.isEmpty {
+                runCLICommand(["remount"] + drivers)
+            } else if target == "all" {
                 runCLICommand(["remount-all"])
             } else {
                 runCLICommand(["remount", target])
             }
         case "unmount":
             let target = body["target"] as? String ?? (body["driverId"] != nil ? "\(body["driverId"]!)" : "all")
-            if target == "all" {
+            let drivers = body["drivers"] as? [String] ?? []
+            if (target == "all" || target == "checked") && !drivers.isEmpty {
+                runCLICommand(["eject"] + drivers)
+            } else if target == "all" {
                 runCLICommand(["eject-now"])
             } else {
                 runCLICommand(["eject", target])
             }
         case "ejectNow":
-            runCLICommand(["eject-now"])
+            let drivers = body["drivers"] as? [String] ?? []
+            if !drivers.isEmpty {
+                runCLICommand(["eject-now"] + drivers)
+            } else {
+                runCLICommand(["eject-now"])
+            }
         case "resizePopover":
             if let w = getFloat(body["width"]), let h = getFloat(body["height"]) {
                 DispatchQueue.main.async {

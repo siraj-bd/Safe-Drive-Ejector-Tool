@@ -107,6 +107,23 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertTrue(results[0].success)
         self.assertIn("disk7", adapter.ejected)
 
+    def test_eject_now_with_specific_targets(self):
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="Transcend SSD", is_external=True, volumes=[vol1, vol2])
+
+        adapter = FeatureMockAdapter(drives=[drive])
+        config = SafeEjectConfig(show_notifications=False)
+        vol_mgr = SSDVolumeManager(adapter=adapter, config=config)
+
+        # Eject ONLY disk8s1
+        results = vol_mgr.eject_now(targets=["disk8s1"])
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertIn("disk8s1", adapter.ejected)
+        self.assertNotIn("disk9s1", adapter.ejected)
+        self.assertNotIn("disk7", adapter.ejected)
+
     def test_idle_monitor_timeout_trigger(self):
         timed_out_drives = []
 

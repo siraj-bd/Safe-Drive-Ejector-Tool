@@ -1925,6 +1925,20 @@
     // Driver Checkbox States & Synchronization (by global slot number - default UNTICKED)
     const driverCheckStates = {};
 
+    function getCheckedDriveTargets() {
+      const targets = [];
+      for (const slotStr in driverCheckStates) {
+        if (driverCheckStates[slotStr] === true) {
+          const slotNum = parseInt(slotStr, 10);
+          const drive = currentDrives[slotNum - 1];
+          if (drive && drive.id) {
+            targets.push(drive.id.replace(/^\/dev\//, ''));
+          }
+        }
+      }
+      return targets;
+    }
+
     function toggleDriverCheckbox(rowId) {
       const slotNum = currentDriveOffset + rowId - 1;
       const elem = document.getElementById(`checkDriver${rowId}`);
@@ -1932,7 +1946,9 @@
       elem.classList.toggle("unchecked");
       driverCheckStates[slotNum] = !elem.classList.contains("unchecked");
       syncAllCheckboxState();
-      postToHost({ action: "driveSelection", driverId: slotNum, checked: driverCheckStates[slotNum] });
+      const drive = currentDrives[slotNum - 1];
+      const targetId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : drive.uuid || drive.name) : `disk${slotNum}`;
+      postToHost({ action: "driveSelection", driverId: targetId, slot: slotNum, checked: driverCheckStates[slotNum] });
     }
 
     function toggleAllCheckbox() {
@@ -1974,40 +1990,53 @@
     // Mount Handlers (Row-specific: mounts that specific slot/drive)
     function triggerMount(rowId) {
       if (rowId === 'all') {
-        const checkedIds = Object.keys(driverCheckStates).filter(k => driverCheckStates[k]);
-        startProcessingLoop("Mounting", "All Drivers");
-        postToHost({ action: "mount", target: "all", drivers: checkedIds });
+        const checkedTargets = getCheckedDriveTargets();
+        if (checkedTargets.length > 0) {
+          startProcessingLoop("Mounting", checkedTargets.join(", "));
+          postToHost({ action: "mount", target: "checked", drivers: checkedTargets });
+        } else {
+          startProcessingLoop("Mounting", "All Drivers");
+          postToHost({ action: "mount", target: "all", drivers: [] });
+        }
       } else {
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
-        const target = drive ? (drive.id || drive.uuid || drive.name) : `${slotNum}`;
         const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
         startProcessingLoop("Mounting", devId);
-        postToHost({ action: "mount", target: target, slot: slotNum });
+        postToHost({ action: "mount", target: devId, slot: slotNum });
       }
     }
 
     // Unmount Handlers (Row-specific: loops until unmount completes)
     function triggerUnmount(rowId) {
       if (rowId === 'all') {
-        const checkedIds = Object.keys(driverCheckStates).filter(k => driverCheckStates[k]);
-        startProcessingLoop("Unmounting", "All Drivers");
-        postToHost({ action: "unmount", target: "all", drivers: checkedIds });
+        const checkedTargets = getCheckedDriveTargets();
+        if (checkedTargets.length > 0) {
+          startProcessingLoop("Unmounting", checkedTargets.join(", "));
+          postToHost({ action: "unmount", target: "checked", drivers: checkedTargets });
+        } else {
+          startProcessingLoop("Unmounting", "All Drivers");
+          postToHost({ action: "unmount", target: "all", drivers: [] });
+        }
       } else {
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
-        const target = drive ? (drive.id || drive.uuid || drive.name) : `${slotNum}`;
         const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
         startProcessingLoop("Unmounting", devId);
-        postToHost({ action: "unmount", target: target, slot: slotNum });
+        postToHost({ action: "unmount", target: devId, slot: slotNum });
       }
     }
 
     // Eject Now (Only ejects currently checked drivers with continuous loop until complete)
     function triggerEjectNow() {
-      const checkedIds = Object.keys(driverCheckStates).filter(k => driverCheckStates[k]);
-      startProcessingLoop("Ejecting Safely", "All Checked");
-      postToHost({ action: "ejectNow", drivers: checkedIds });
+      const checkedTargets = getCheckedDriveTargets();
+      if (checkedTargets.length > 0) {
+        startProcessingLoop("Ejecting Safely", checkedTargets.join(", "));
+        postToHost({ action: "ejectNow", drivers: checkedTargets });
+      } else {
+        startProcessingLoop("Ejecting Safely", "All Checked");
+        postToHost({ action: "ejectNow", drivers: [] });
+      }
     }
 
     function updateDiskCountBars(val) {
@@ -2142,24 +2171,25 @@
       if (state.external_drives && Array.isArray(state.external_drives)) {
         const drives = [];
         state.external_drives.forEach(d => {
+          let addedForDrive = false;
           if (d.volumes && d.volumes.length > 0) {
             d.volumes.forEach(v => {
-              if (v.name && v.name !== "EFI") {
-                if (!v.is_mounted && v.fs_type === "Apple_APFS") return;
+              if (v.name && v.name !== "EFI" && v.fs_type !== "Apple_APFS") {
                 drives.push({
                   id: v.device_id || d.id || "",
                   name: v.name,
                   mounted: v.is_mounted,
                   uuid: v.uuid || ""
                 });
+                addedForDrive = true;
               }
             });
           }
-          if (drives.length === 0 && d.name) {
+          if (!addedForDrive && d.name) {
             drives.push({
               id: d.id || "",
               name: d.name,
-              mounted: true,
+              mounted: d.is_mounted !== undefined ? d.is_mounted : true,
               uuid: d.primary_uuid || ""
             });
           }
