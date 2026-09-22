@@ -321,3 +321,18 @@ class StateManager:
                 state_path.unlink()
             except OSError:
                 pass
+
+    @classmethod
+    def remove_ejected_target(cls, target: str) -> None:
+        """Remove a remounted volume or drive from ejected_state.json."""
+        try:
+            state = cls.load_ejected_drives()
+            clean_t = target.strip().replace("/dev/", "").lower()
+            drives = [d for d in state.get("drive_ids", []) if d.replace("/dev/", "").lower() != clean_t]
+            vols = [v for v in state.get("volume_identifiers", []) if v.replace("/dev/", "").lower() != clean_t]
+            if not drives and not vols:
+                cls.clear_ejected_drives()
+            else:
+                cls.save_ejected_drives(drives, vols, append=False)
+        except Exception:
+            pass

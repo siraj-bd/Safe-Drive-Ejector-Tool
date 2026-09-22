@@ -175,7 +175,11 @@ class SSDVolumeManager:
                     logger.info(f"Matched volume {v.device_id} ({v.name}). Unmounting volume only.")
                     res = self.adapter.unmount_volume(v.device_id)
                     if res.success:
-                        StateManager.save_ejected_drives([], [v.device_id])
+                        StateManager.save_ejected_drives([], [v.device_id], append=True)
+                        other_mounted = [other for other in d.volumes if other.device_id != v.device_id and other.is_mounted]
+                        if not other_mounted:
+                            logger.info(f"All volumes on physical drive {d.id} are now unmounted. Entering Deep Sleep (LED OFF)...")
+                            self.adapter.eject_drive(d.id)
                     return res
 
         # 2. Match parent physical drive
@@ -185,28 +189,7 @@ class SSDVolumeManager:
                 or (d.id.replace("/dev/", "").lower() == clean_target.replace("/dev/", "").lower())
                 or (d.primary_uuid and d.primary_uuid.lower() == clean_target.lower())
             ):
-                if self.config.unmount_instead_of_eject:
-                    # Unmount all mounted volumes of this drive without detaching physical USB hardware
-                    logger.info(f"Unmounting all mounted volumes for drive {d.id} (unmount_instead_of_eject=True)")
-                    vols_to_unmount = [v for v in d.volumes if v.is_mounted]
-                    if not vols_to_unmount:
-                        return self.adapter.eject_drive(d.id)
-                    v_res = []
-                    unmounted_devs = []
-                    for v in vols_to_unmount:
-                        r = self.adapter.unmount_volume(v.device_id)
-                        v_res.append(r)
-                        if r.success:
-                            unmounted_devs.append(v.device_id)
-                    if unmounted_devs:
-                        StateManager.save_ejected_drives([], unmounted_devs)
-                    if all(r.success for r in v_res):
-                        return EjectResult(target=d.id, success=True, message=f"All volumes on {d.id} unmounted safely.")
-                    else:
-                        failed = [r.message for r in v_res if not r.success]
-                        return EjectResult(target=d.id, success=False, message="; ".join(failed))
-                else:
-                    return self.adapter.eject_drive(d.id)
+                return self.deep_sleep_drive(d.id)
 
         # 3. Direct fallback: if target looks like a volume partition (e.g. disk8s1)
         import re
@@ -214,6 +197,73 @@ class SSDVolumeManager:
             return self.adapter.unmount_volume(clean_target)
 
         return self.adapter.eject_drive(clean_target)
+
+    def deep_sleep_drive(self, drive_id: str) -> EjectResult:
+        """
+        Deep Sleep / LED-OFF Sleep workflow:
+        1. Flush filesystem buffers (sync).
+        2. Safely unmount all mounted volumes of target physical drive.
+        3. If ANY required unmount fails, ABORT physical eject and report error.
+        4. Only after successful unmounts, eject physical parent disk to trigger LED-OFF sleep.
+        5. Record sleeping relevant volumes for Auto-Wake.
+        """
+        import subprocess, sys
+        clean_id = drive_id.strip().replace("/dev/", "")
+        drives = self.get_all_external_drives()
+
+        target_drive = None
+        for d in drives:
+            d_id = d.id.replace("/dev/", "")
+            if d_id.lower() == clean_id.lower():
+                target_drive = d
+                break
+            for v in d.volumes:
+                v_id = v.device_id.replace("/dev/", "")
+                if v_id.lower() == clean_id.lower():
+                    target_drive = d
+                    break
+            if target_drive:
+                break
+
+        if not target_drive:
+            return self.adapter.eject_drive(clean_id)
+
+        # 1. Flush filesystem buffers
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["sync"], check=False)
+        except Exception:
+            pass
+
+        # 2. Safely unmount all mounted volumes
+        vols_to_unmount = [v for v in target_drive.volumes if v.is_mounted]
+        unmounted_vols: List[str] = []
+
+        for v in vols_to_unmount:
+            res = self.adapter.unmount_volume(v.device_id)
+            if not res.success:
+                logger.error(f"Deep Sleep aborted: volume {v.device_id} ({v.name}) failed to unmount: {res.message}")
+                return EjectResult(
+                    target=target_drive.id,
+                    success=False,
+                    message=f"Deep Sleep aborted: {v.name or v.device_id} in use ({res.message})",
+                    blocking_processes=res.blocking_processes,
+                )
+            unmounted_vols.append(v.device_id)
+
+        # 4. Only after successful unmounts, eject physical parent disk
+        eject_res = self.adapter.eject_drive(target_drive.id)
+        if eject_res.success:
+            if unmounted_vols:
+                StateManager.save_ejected_drives([], unmounted_vols, append=True)
+            return EjectResult(
+                target=target_drive.id,
+                success=True,
+                message=f"Drive {target_drive.id} in Deep Sleep (LED OFF). {len(unmounted_vols)} volume(s) safely unmounted.",
+            )
+        else:
+            logger.warning(f"Parent eject for {target_drive.id} failed after unmounting volumes: {eject_res.message}")
+            return eject_res
 
     def toggle_managed(self, target_id: str) -> Tuple[bool, str]:
         """

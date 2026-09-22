@@ -215,7 +215,7 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertIn("show_notifications", d)
         self.assertIn("notify_after_eject_remount", d)
 
-    def test_idle_sleep_unmounts_volumes_not_hardware(self):
+    def test_idle_sleep_unmounts_volumes_and_ejects_parent_for_led_off(self):
         adapter = FeatureMockAdapter()
         vol = VolumeInfo(device_id="disk8s1", name="SupportDrive", mount_point="/Volumes/SupportDrive", is_mounted=True)
         drive = DriveInfo(id="disk7", name="Samsung T7", is_external=True, volumes=[vol])
@@ -232,9 +232,9 @@ class TestFunctionalFeatures(unittest.TestCase):
         # Trigger idle sleep
         engine._on_idle_sleep([])
 
-        # Volume must be unmounted, but hardware disk7 must NOT be ejected!
+        # Volume must be safely unmounted first, then parent disk7 ejected for LED-OFF deep sleep
         self.assertIn("disk8s1", adapter.unmounted_volumes)
-        self.assertNotIn("disk7", adapter.ejected)
+        self.assertIn("disk7", adapter.ejected)
         self.assertIn("disk8s1", engine.idle_monitor.sleeping_drive_ids)
 
         # State must record the volume identifier
@@ -333,9 +333,9 @@ class TestFunctionalFeatures(unittest.TestCase):
         # Trigger sleep callback from power listener
         captured_callbacks["sleep"]()
 
-        # Volume must be safely unmounted, and drive must NOT be physically ejected
+        # Volume must be safely unmounted first, then physical parent disk ejected for LED-OFF sleep
         self.assertIn("disk8s1", adapter.unmounted_volumes)
-        self.assertNotIn("disk8", adapter.ejected)
+        self.assertIn("disk8", adapter.ejected)
 
         # State must record the sleeping volume
         state = StateManager.load_ejected_drives()
@@ -343,6 +343,94 @@ class TestFunctionalFeatures(unittest.TestCase):
 
         # Stop idle monitor
         engine.idle_monitor.stop()
+
+    def test_deep_sleep_all_mounted_volumes_unmounted_before_parent_eject(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="Part1", mount_point="/Volumes/Part1", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Part2", mount_point="/Volumes/Part2", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="Transcend", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        res = volume_mgr.deep_sleep_drive("disk7")
+        self.assertTrue(res.success)
+        # Verify both volumes were safely unmounted before parent disk7 was ejected
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        self.assertIn("disk9s1", adapter.unmounted_volumes)
+        self.assertIn("disk7", adapter.ejected)
+
+        # State must record both unmounted volume partitions for Auto-Wake
+        state = StateManager.load_ejected_drives()
+        self.assertIn("disk8s1", state.get("volume_identifiers", []))
+        self.assertIn("disk9s1", state.get("volume_identifiers", []))
+
+    def test_deep_sleep_aborted_when_unmount_fails(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="Part1", mount_point="/Volumes/Part1", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        # Simulate unmount failure (e.g. file in use)
+        def fail_unmount(vid):
+            return EjectResult(target=vid, success=False, message="Resource busy")
+        adapter.unmount_volume = fail_unmount
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        res = volume_mgr.deep_sleep_drive("disk7")
+        self.assertFalse(res.success)
+        self.assertIn("Resource busy", res.message)
+        # Parent disk7 MUST NOT be ejected when unmount fails
+        self.assertNotIn("disk7", adapter.ejected)
+
+    def test_deep_sleep_selective_wake_drive1_and_drive2(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="Part1", mount_point="/Volumes/Part1", is_mounted=False)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Part2", mount_point="/Volumes/Part2", is_mounted=False)
+        drive = DriveInfo(id="disk7", name="Transcend", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # 1. Wake Drive 1 (disk8s1) only
+        res1 = engine.remount_single("disk8s1")
+        self.assertTrue(res1.success)
+        self.assertIn("disk8s1", adapter.mounted_volumes)
+        self.assertNotIn("disk9s1", adapter.mounted_volumes)
+
+        # 2. Wake Drive 2 (disk9s1) only
+        adapter.mounted_volumes = []
+        res2 = engine.remount_single("disk9s1")
+        self.assertTrue(res2.success)
+        self.assertIn("disk9s1", adapter.mounted_volumes)
+        self.assertNotIn("disk8s1", adapter.mounted_volumes)
+
+    def test_eject_now_clears_auto_wake_state(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="Part1", mount_point="/Volumes/Part1", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="Transcend", is_external=True, volumes=[vol1], is_managed=True)
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Populate sleep state
+        StateManager.save_ejected_drives([], ["disk8s1"], append=False)
+        self.assertTrue(len(StateManager.load_ejected_drives().get("volume_identifiers", [])) > 0)
+
+        # Execute Eject Now (explicit physical removal workflow)
+        res = engine.eject_now()
+        self.assertTrue(any(r.success for r in res))
+        self.assertIn("disk7", adapter.ejected)
+
+        # Auto-Wake state must be completely cleared so unplugged drive is not woken
+        state = StateManager.load_ejected_drives()
+        self.assertEqual(len(state.get("volume_identifiers", [])), 0)
+        self.assertEqual(len(state.get("drive_ids", [])), 0)
 
 
 if __name__ == "__main__":

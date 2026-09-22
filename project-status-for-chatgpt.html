@@ -155,7 +155,7 @@
 <body>
 <div class="container">
     <header>
-        <div class="badge badge-pass">ALL 18 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS</div>
+        <div class="badge badge-pass">ALL 22 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS &bull; LIVE HARDWARE VERIFIED</div>
         <h1>Safe Drive Ejector Tool &mdash; Confirmed Fix & Project Status</h1>
         <p class="subtitle">Evidence-based verification and engineering report &bull; Generated September 2026</p>
     </header>
@@ -165,7 +165,7 @@
             <h2>1. Architecture Overview</h2>
             <p>The application implements a decoupled, high-resilience architecture:</p>
             <ul>
-                <li><strong>Core Engine (Python 3.9+)</strong>: <code>core/engine.py</code> and <code>platform_adapters/macos.py</code> provide deterministic volume discovery, unmounting, remounting, safe state persistence (<code>state.json</code>), and idle sleep monitoring.</li>
+                <li><strong>Core Engine (Python 3.9+)</strong>: <code>core/engine.py</code> and <code>core/volume_manager.py</code> provide deterministic volume discovery, safe volume unmounting, LED-OFF parent physical sleep, selective wake remounting, safe state persistence (<code>ejected_state.json</code>), and idle sleep monitoring.</li>
                 <li><strong>Native Menu Bar App (Swift)</strong>: <code>ui/SafeEjectMenuBar.swift</code> runs native status item lifecycle, system sleep (<code>NSWorkspace.willSleepNotification</code>), wake (<code>NSWorkspace.didWakeNotification</code>), and logout/shutdown hooks (<code>NSWorkspace.willPowerOffNotification</code>, <code>NSApplication.willTerminateNotification</code>).</li>
                 <li><strong>Interactive UI Component</strong>: <code>ui/components/SafeDriveEjectorCard.html</code> rendered within native <code>WKWebView</code> via IPC bridge (<code>window.webkit.messageHandlers</code>).</li>
             </ul>
@@ -173,13 +173,13 @@
 
         <div class="card">
             <h2>2. Hardware Baseline (Transcend StoreJet)</h2>
-            <p>Target physical hardware verified through macOS system profiling:</p>
+            <p>Target physical hardware verified through macOS system profiling and live testing:</p>
             <ul>
                 <li><strong>Device</strong>: StoreJet Transcend (480 GB SSD)</li>
                 <li><strong>Vendor ID (VID)</strong>: <code>0x2174</code> &bull; <strong>Product ID (PID)</strong>: <code>0x2000</code></li>
-                <li><strong>Controller / Bridge</strong>: ASMedia ASM1153E / Realtek USB-to-SATA Bridge</li>
-                <li><strong>SAT Support</strong>: Verified (S.M.A.R.T. status active)</li>
-                <li><strong>Kernel Node</strong>: Root device <code>/dev/disk7</code> with APFS container <code>/dev/disk8</code></li>
+                <li><strong>Controller / Bridge</strong>: ASMedia ASM1153E USB-to-SATA Bridge</li>
+                <li><strong>Kernel Nodes</strong>: Root device <code>/dev/disk7</code> with APFS containers <code>/dev/disk8</code> and <code>/dev/disk9</code></li>
+                <li><strong>Partitions</strong>: <code>disk8s1</code> (<code>support-external-drive</code>) and <code>disk9s1</code> (<code>Macbook Backup</code>)</li>
             </ul>
         </div>
     </div>
@@ -198,56 +198,56 @@
             <tbody>
                 <tr>
                     <td>1</td>
-                    <td><strong>Safe Sleep Behavior</strong></td>
-                    <td>Normal Sleep exclusively uses <code>diskutil unmount</code> on volume mount points. Device node (<code>/dev/disk7</code>) remains attached to the USB bus. No physical <code>diskutil eject</code> is executed during sleep, ensuring background auto-wake remains technically possible.</td>
+                    <td><strong>LED-OFF Deep Sleep</strong></td>
+                    <td>Sequence: <code>sync</code> &rarr; safely unmount all mounted volumes of parent drive &rarr; abort parent eject if any volume unmount fails &rarr; eject parent physical disk (<code>diskutil eject disk7</code>) to place ASMedia bridge into deep standby and turn SSD LED completely OFF while USB cable remains connected.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
                     <td>2</td>
-                    <td><strong>Isolated Auto-Wake</strong></td>
-                    <td>Auto-wake logic in <code>engine.py:remount_all_ejected(only_if_recorded=True)</code> and <code>cli.py:cmd_remount_all</code> restores <em>only</em> drives explicitly recorded in <code>state.json</code> as sleeping. Unrelated external drives are strictly ignored.</td>
+                    <td><strong>Selective Wake / Remount</strong></td>
+                    <td>Selective remounting is confirmed on live hardware: mounting an individual volume (e.g. <code>diskutil mount disk8s1</code>) wakes the SSD and turns the LED ON while leaving other volumes (e.g. <code>disk9s1</code>) unmounted. <code>ejected_state.json</code> dynamically updates.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
                     <td>3</td>
-                    <td><strong>System Sleep Hook</strong></td>
-                    <td><code>NSWorkspace.willSleepNotification</code> triggers <code>python3 main.py idle-sleep</code>. Physical USB link stays alive; filesystem cache is flushed and unmounted before macOS enters sleep.</td>
+                    <td><strong>Isolated Auto-Wake</strong></td>
+                    <td>Auto-wake logic in <code>engine.py:remount_all_ejected(only_if_recorded=True)</code> and <code>cli.py:cmd_remount_all</code> restores <em>only</em> drives explicitly recorded in <code>ejected_state.json</code> as sleeping. Unrelated external drives are strictly ignored.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
                     <td>4</td>
+                    <td><strong>System Sleep Hook</strong></td>
+                    <td><code>NSWorkspace.willSleepNotification</code> triggers <code>python3 main.py idle-sleep</code>. Physical USB link stays alive; filesystem cache is flushed, volumes unmounted, and parent ejected for LED-OFF standby before sleep.</td>
+                    <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
+                </tr>
+                <tr>
+                    <td>5</td>
                     <td><strong>Before Logout Hook</strong></td>
                     <td><code>ui/SafeEjectMenuBar.swift</code> registers synchronous hooks on <code>NSWorkspace.willPowerOffNotification</code> and <code>NSApplication.willTerminateNotification</code> to execute <code>idle-sleep</code> before the user session ends.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
-                    <td>5</td>
+                    <td>6</td>
                     <td><strong>Dynamic Processing UI</strong></td>
-                    <td>IPC bridge triggers <code>window.onOperationStart(cmd, target)</code> with instant action labels ("Mounting...", "Unmounting...", "Safe Sleep...", "Ejecting...") and transitions to "Ready" / "System Idle". Stale "Processing.........." text removed.</td>
+                    <td>IPC bridge triggers <code>window.onOperationStart(cmd, target)</code> with instant action labels ("Mounting...", "Unmounting...", "Deep Sleep...", "Ejecting Safely...") and transitions to "Ready" / "System Idle". Stale text removed.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
-                    <td>6</td>
+                    <td>7</td>
                     <td><strong>Accurate Drive Count</strong></td>
                     <td>Removed <code>#diskCountBars</code> and <code>.count-bars</code> that rendered repetitive bars (<code>IIII</code>). Counter strictly renders true numeric integer strings (<code>0</code>, <code>1</code>, <code>2</code>, ...).</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
                 <tr>
-                    <td>7</td>
-                    <td><strong>Drive-Specific Scoping</strong></td>
-                    <td>Per-row Mount/Unmount commands target only the specific disk identifier passed. Global actions target selected/managed disks.</td>
-                    <td><span class="status-tag tag-verified">VERIFIED</span></td>
-                </tr>
-                <tr>
                     <td>8</td>
-                    <td><strong>Eject Now vs Sleep Segregation</strong></td>
-                    <td><code>Eject Now</code> is reserved exclusively for physical disconnection via <code>diskutil eject</code>. It is completely isolated from the Sleep / Wake lifecycle.</td>
+                    <td><strong>Eject Now Segregation</strong></td>
+                    <td><code>Eject Now</code> is reserved exclusively for physical unplugging. It clears <code>ejected_state.json</code> completely, guaranteeing no background auto-wake occurs after unplugging.</td>
                     <td><span class="status-tag tag-verified">VERIFIED</span></td>
                 </tr>
                 <tr>
                     <td>9</td>
-                    <td><strong>Hardware Power Realism</strong></td>
-                    <td>No unsafe ATA/SCSI power-down commands that risk locking the SATA bridge. Confirmed physical limitation: macOS does not provide userland APIs to cut USB 5V VBUS power to connected ports while active. Standby power reduction is achieved safely via unmounting (stopping all NAND writes, active background GC, and paging).</td>
+                    <td><strong>Safety Realism & Abort Gate</strong></td>
+                    <td>If any volume unmount encounters a busy file, parent eject is aborted, preventing data loss. No raw ATA/SCSI power-down commands are used, ensuring SATA bridge reliability.</td>
                     <td><span class="status-tag tag-hardware">DOCUMENTED & BOUNDED</span></td>
                 </tr>
             </tbody>
@@ -301,8 +301,8 @@
             <h2>Test Verification Results</h2>
             <pre>
 $ SAFEEJECT_CONFIG_DIR=.tmp_config python3 -m unittest discover tests
-..................
-Ran 18 tests in 0.093s
+......................
+Ran 22 tests in 0.201s
 OK
 
 $ swiftc -module-cache-path .build/cache -O ui/SafeEjectMenuBar.swift -o bin/SafeEjectMenuBar
@@ -310,11 +310,14 @@ Build exit code: 0 (No warnings, no errors)
             </pre>
             <p><strong>Verified Test Suites:</strong></p>
             <ul>
+                <li><code>test_deep_sleep_all_mounted_volumes_unmounted_before_parent_eject</code> (Pass)</li>
+                <li><code>test_deep_sleep_aborted_when_unmount_fails</code> (Pass)</li>
+                <li><code>test_deep_sleep_selective_wake_drive1_and_drive2</code> (Pass)</li>
+                <li><code>test_eject_now_clears_auto_wake_state</code> (Pass)</li>
+                <li><code>test_idle_sleep_unmounts_volumes_and_ejects_parent_for_led_off</code> (Pass)</li>
                 <li><code>test_legacy_daemon_sleep_uses_safe_unmount</code> (Pass)</li>
                 <li><code>test_auto_wake_only_recorded_drives</code> (Pass)</li>
-                <li><code>test_idle_sleep_unmounts_without_physical_eject</code> (Pass)</li>
-                <li><code>test_macos_adapter_discovery</code> (Pass)</li>
-                <li><code>test_state_persistence_and_cleanup</code> (Pass)</li>
+                <li><code>test_max_6_managed_drives</code> (Pass)</li>
                 <li><code>test_single_instance_lock</code> (Pass)</li>
             </ul>
         </div>

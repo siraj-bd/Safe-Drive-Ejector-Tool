@@ -67,6 +67,7 @@ class SafeEjectEngine:
         results = self.volume_manager.eject_now(targets=targets)
         success = any(r.success for r in results)
         if success:
+            StateManager.clear_ejected_drives()
             self.volume_manager.play_sound(self.config.success_sound)
         else:
             self.volume_manager.play_sound(self.config.failure_sound)
@@ -103,30 +104,26 @@ class SafeEjectEngine:
         logger.info(f"Remounting {len(volume_ids)} volume(s) and {len(drive_ids)} drive(s)...")
         success_count = 0
 
-        # 1. Remount standalone volume partitions (not covered by whole-drive remounts)
-        standalone_vols = [
-            vid for vid in volume_ids
-            if not any(vid.startswith(did + "s") or vid.startswith(did + "p") or vid == did for did in drive_ids)
-        ]
-
-        for vid in standalone_vols:
-            res = self.volume_manager.mount_target(vid)
-            results.append(res)
-            if res.success:
-                success_count += 1
-                self.idle_monitor.mark_drive_awake(vid)
-            else:
-                logger.warning(f"Could not remount volume {vid}: {res.message}")
-
-        # 2. Remount full physical drives
-        for drive_id in drive_ids:
-            res = self.volume_manager.mount_target(drive_id)
-            results.append(res)
-            if res.success:
-                success_count += 1
-                self.idle_monitor.mark_drive_awake(drive_id)
-            else:
-                logger.warning(f"Could not remount drive {drive_id}: {res.message}")
+        # 1. Remount recorded volumes (preserves selective wake)
+        if volume_ids:
+            for vid in volume_ids:
+                res = self.volume_manager.mount_target(vid)
+                results.append(res)
+                if res.success:
+                    success_count += 1
+                    self.idle_monitor.mark_drive_awake(vid)
+                else:
+                    logger.warning(f"Could not remount volume {vid}: {res.message}")
+        elif drive_ids:
+            # 2. Remount full physical drives only if no specific volumes were recorded
+            for drive_id in drive_ids:
+                res = self.volume_manager.mount_target(drive_id)
+                results.append(res)
+                if res.success:
+                    success_count += 1
+                    self.idle_monitor.mark_drive_awake(drive_id)
+                else:
+                    logger.warning(f"Could not remount drive {drive_id}: {res.message}")
 
         StateManager.clear_ejected_drives()
 
@@ -158,6 +155,7 @@ class SafeEjectEngine:
         res = self.volume_manager.mount_target(target)
         if res.success:
             self.idle_monitor.mark_drive_awake(target)
+            StateManager.remove_ejected_target(target)
             self.volume_manager.play_sound(self.config.success_sound)
         else:
             self.volume_manager.play_sound(self.config.failure_sound)
@@ -272,47 +270,34 @@ class SafeEjectEngine:
         return self.volume_manager.toggle_managed(target)
 
     def _on_idle_sleep(self, _targets: List[str]):
-        """Triggered when Mac is idle beyond the sleep timer (default 2 mins)."""
-        # Only put the individually chosen SSDs to sleep (or all managed/external drives if none singled out)
+        """Triggered when Mac is idle beyond the sleep timer (default 2 mins) or on system sleep."""
         sleep_targets = self.get_sleep_selected_drives()
         if not sleep_targets:
             sleep_targets = self.get_managed_drives() or self.get_external_drives()
         if not sleep_targets:
             return
 
-        logger.info(f"Mac idle threshold reached. Putting {len(sleep_targets)} selected SSD(s) to sleep...")
+        logger.info(f"Triggering Deep Sleep (LED OFF) for {len(sleep_targets)} drive(s)...")
         ejected_count = 0
-        asleep_ids: List[str] = []
-        asleep_vols: List[str] = []
 
         for d in sleep_targets:
             if not d.has_mounted_volumes:
                 continue
 
-            # Sleep strictly unmounts mounted volumes to cease I/O while keeping physical USB device connected
-            logger.info(f"Safely unmounting mounted volumes for drive {d.id} for sleep (device remains connected)")
-            vols_to_unmount = [v for v in d.volumes if v.is_mounted]
-            drive_had_success = False
-            for v in vols_to_unmount:
-                r = self.adapter.unmount_volume(v.device_id)
-                if r.success:
-                    asleep_vols.append(v.device_id)
-                    self.idle_monitor.mark_drive_asleep(v.device_id)
-                    drive_had_success = True
-                else:
-                    logger.warning(f"Could not unmount volume {v.device_id}: {r.message}")
-            if drive_had_success:
+            r = self.volume_manager.deep_sleep_drive(d.id)
+            if r.success:
                 ejected_count += 1
-
-        if asleep_ids or asleep_vols:
-            StateManager.save_ejected_drives(asleep_ids, asleep_vols, append=True)
+                for v in d.volumes:
+                    self.idle_monitor.mark_drive_asleep(v.device_id)
+            else:
+                logger.warning(f"Could not put drive {d.id} into Deep Sleep: {r.message}")
 
         if ejected_count > 0:
             self.volume_manager.play_sound(self.config.success_sound)
             if self.config.show_notifications:
                 self.adapter.show_notification(
-                    "SafeEject - SSD Sleep",
-                    f"{ejected_count} SSD(s) safely put to sleep after {self.config.sleep_timer_label} of Mac inactivity.",
+                    "SafeEject - Deep Sleep",
+                    f"{ejected_count} SSD(s) entered Deep Sleep (LED OFF).",
                 )
 
     def _on_touch_wake(self, sleeping_ids: List[str]):

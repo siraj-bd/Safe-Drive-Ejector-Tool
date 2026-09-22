@@ -1703,7 +1703,7 @@
       if (cmd === "eject-now") {
         startProcessingLoop("Ejecting Safely", targetLabel || "Selected Drives");
       } else if (cmd === "idle-sleep") {
-        startProcessingLoop("Safe Sleep", targetLabel || "Unmounting Volumes");
+        startProcessingLoop("Deep Sleep", targetLabel || "LED OFF Mode");
       } else if (cmd === "eject") {
         startProcessingLoop("Unmounting", targetLabel);
       } else if (cmd === "remount" || cmd === "remount-all") {
@@ -1718,7 +1718,7 @@
       if (cmd === "eject-now") {
         completeProcessing(success ? "Safe to Unplug" : "Eject Incomplete", success ? "Safe Ejection Done" : "Drive In Use");
       } else if (cmd === "idle-sleep") {
-        completeProcessing(success ? "Sleep Activated" : "Sleep Failed", success ? "Volumes Unmounted" : "Drive Busy");
+        completeProcessing(success ? "LED OFF Sleep" : "Sleep Aborted", success ? "Drive Asleep (LED OFF)" : "Drive Busy");
       } else if (cmd === "eject") {
         completeProcessing(success ? "Volume Unmounted" : "Unmount Failed", success ? "Clean Unmount Done" : "Drive Busy");
       } else if (cmd === "remount" || cmd === "remount-all") {
