@@ -77,7 +77,7 @@ class SafeEjectEngine:
         """Eject all managed external drives."""
         return self.eject_now()
 
-    def remount_all_ejected(self) -> List[RemountResult]:
+    def remount_all_ejected(self, only_if_recorded: bool = False) -> List[RemountResult]:
         """Remount drives and volumes that were previously safely ejected by SafeEject."""
         state = StateManager.load_ejected_drives()
         drive_ids = state.get("drive_ids", [])
@@ -85,6 +85,10 @@ class SafeEjectEngine:
         results: List[RemountResult] = []
 
         if not drive_ids and not volume_ids:
+            if only_if_recorded:
+                logger.info("Auto-Wake: No recorded sleeping drives/volumes found in state. Skipping unrelated drives.")
+                self.status_message = "No sleeping drives to restore"
+                return []
             logger.info("No recorded ejected drives or volumes in state. Mounting managed drives...")
             managed = self.get_managed_drives()
             for d in managed:
@@ -285,29 +289,20 @@ class SafeEjectEngine:
             if not d.has_mounted_volumes:
                 continue
 
-            if self.config.unmount_instead_of_eject:
-                # Unmount mounted volumes without detaching physical USB hardware
-                logger.info(f"Unmounting mounted volumes for drive {d.id} (unmount_instead_of_eject=True)")
-                vols_to_unmount = [v for v in d.volumes if v.is_mounted]
-                drive_had_success = False
-                for v in vols_to_unmount:
-                    r = self.adapter.unmount_volume(v.device_id)
-                    if r.success:
-                        asleep_vols.append(v.device_id)
-                        self.idle_monitor.mark_drive_asleep(v.device_id)
-                        drive_had_success = True
-                    else:
-                        logger.warning(f"Could not unmount volume {v.device_id}: {r.message}")
-                if drive_had_success:
-                    ejected_count += 1
-            else:
-                res = self.adapter.eject_drive(d.id)
-                if res.success:
-                    ejected_count += 1
-                    asleep_ids.append(d.id)
-                    self.idle_monitor.mark_drive_asleep(d.id)
+            # Sleep strictly unmounts mounted volumes to cease I/O while keeping physical USB device connected
+            logger.info(f"Safely unmounting mounted volumes for drive {d.id} for sleep (device remains connected)")
+            vols_to_unmount = [v for v in d.volumes if v.is_mounted]
+            drive_had_success = False
+            for v in vols_to_unmount:
+                r = self.adapter.unmount_volume(v.device_id)
+                if r.success:
+                    asleep_vols.append(v.device_id)
+                    self.idle_monitor.mark_drive_asleep(v.device_id)
+                    drive_had_success = True
                 else:
-                    logger.warning(f"Could not eject drive {d.id}: {res.message}")
+                    logger.warning(f"Could not unmount volume {v.device_id}: {r.message}")
+            if drive_had_success:
+                ejected_count += 1
 
         if asleep_ids or asleep_vols:
             StateManager.save_ejected_drives(asleep_ids, asleep_vols, append=True)

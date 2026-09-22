@@ -1672,7 +1672,7 @@
       }
     }
 
-    function completeProcessing(finalMsg = "Safe to unplug", subMsg = "Ready") {
+    function completeProcessing(finalMsg = "Ready", subMsg = "Operation Complete") {
       isProcessingActive = false;
       if (processingInterval) {
         clearInterval(processingInterval);
@@ -1692,19 +1692,39 @@
       clearTimeout(statusHoldTimer);
       statusHoldTimer = setTimeout(() => {
         if (bodyRow) bodyRow.classList.remove("active");
-        if (procElem) procElem.textContent = "Processing..........";
-        if (modeElem) modeElem.textContent = "Auto-Complete Enabled";
-      }, 1800);
+        if (procElem) procElem.textContent = "Ready";
+        if (modeElem) modeElem.textContent = "System Idle";
+      }, 2000);
     }
+
+    // Host IPC callback when backend Process begins
+    window.onOperationStart = function(cmd, targetParam) {
+      const targetLabel = targetParam ? targetParam : "";
+      if (cmd === "eject-now") {
+        startProcessingLoop("Ejecting Safely", targetLabel || "Selected Drives");
+      } else if (cmd === "idle-sleep") {
+        startProcessingLoop("Safe Sleep", targetLabel || "Unmounting Volumes");
+      } else if (cmd === "eject") {
+        startProcessingLoop("Unmounting", targetLabel);
+      } else if (cmd === "remount" || cmd === "remount-all") {
+        startProcessingLoop("Mounting", targetLabel || "Sleeping Drives");
+      } else {
+        startProcessingLoop("Processing", cmd);
+      }
+    };
 
     // Host IPC callback when backend Process completes
     window.onOperationComplete = function(cmd, success) {
-      if (cmd === "eject-now" || cmd === "eject") {
-        completeProcessing("Safe to unplug", "Safe Ejection Complete");
+      if (cmd === "eject-now") {
+        completeProcessing(success ? "Safe to Unplug" : "Eject Incomplete", success ? "Safe Ejection Done" : "Drive In Use");
+      } else if (cmd === "idle-sleep") {
+        completeProcessing(success ? "Sleep Activated" : "Sleep Failed", success ? "Volumes Unmounted" : "Drive Busy");
+      } else if (cmd === "eject") {
+        completeProcessing(success ? "Volume Unmounted" : "Unmount Failed", success ? "Clean Unmount Done" : "Drive Busy");
       } else if (cmd === "remount" || cmd === "remount-all") {
-        completeProcessing("Drive Mounted", "Ready to Access");
+        completeProcessing(success ? "Drive Mounted" : "Mount Incomplete", success ? "Ready to Access" : "Check Filesystem");
       } else {
-        completeProcessing("Ready", "Auto-Complete Enabled");
+        completeProcessing(success ? "Success" : "Failed", "Operation Finished");
       }
     };
 

@@ -285,6 +285,30 @@ class TestFunctionalFeatures(unittest.TestCase):
             slept = engine.sleep_system()
             self.assertTrue(slept)
 
+    def test_auto_wake_only_recorded_drives(self):
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="DriveOne", mount_point="/Volumes/DriveOne", is_mounted=False)
+        drive1 = DriveInfo(id="disk8", name="SSDOne", is_external=True, volumes=[vol1])
+        vol2 = VolumeInfo(device_id="disk9s1", name="UnrelatedDrive", mount_point="/Volumes/UnrelatedDrive", is_mounted=False)
+        drive2 = DriveInfo(id="disk9", name="SSDTwo", is_external=True, volumes=[vol2])
+        adapter.drives = [drive1, drive2]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # 1. When state is empty, auto-wake (only_if_recorded=True) must NOT remount any drives
+        StateManager.clear_ejected_drives()
+        res_empty = engine.remount_all_ejected(only_if_recorded=True)
+        self.assertEqual(len(res_empty), 0)
+        self.assertEqual(len(adapter.mounted_volumes), 0)
+
+        # 2. When only disk8s1 was put to sleep, only disk8s1 must be remounted
+        StateManager.save_ejected_drives([], ["disk8s1"], append=False)
+        res_recorded = engine.remount_all_ejected(only_if_recorded=True)
+        self.assertEqual(len(res_recorded), 1)
+        self.assertIn("disk8s1", adapter.mounted_volumes)
+        self.assertNotIn("disk9s1", adapter.mounted_volumes)
+
 
 if __name__ == "__main__":
     unittest.main()

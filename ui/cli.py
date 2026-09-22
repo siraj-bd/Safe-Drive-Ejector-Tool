@@ -159,9 +159,15 @@ def cmd_eject_single(engine: SafeEjectEngine, args):
 
 def cmd_remount_all(engine: SafeEjectEngine, args):
     """Remount previously ejected drives."""
+    only_recorded = getattr(args, "only_recorded", False)
     state = StateManager.load_ejected_drives()
     drive_ids = state.get("drive_ids", [])
-    if not drive_ids:
+    volume_ids = state.get("volume_identifiers", [])
+
+    if not drive_ids and not volume_ids:
+        if only_recorded:
+            print("\n[Auto-Wake] No recorded sleeping drives/volumes found in state. Skipping unrelated drives.\n")
+            return
         print("\nNo recorded ejected drives found in state. Remounting all connected external drives...")
         ext_drives = engine.get_external_drives()
         for d in ext_drives:
@@ -171,8 +177,9 @@ def cmd_remount_all(engine: SafeEjectEngine, args):
         print()
         return
 
-    print(f"\nRemounting {len(drive_ids)} previously ejected drive(s)...")
-    results = engine.remount_all_ejected()
+    item_count = len(drive_ids) + len(volume_ids)
+    print(f"\nRemounting {item_count} previously sleeping drive/volume item(s)...")
+    results = engine.remount_all_ejected(only_if_recorded=only_recorded)
     for res in results:
         icon = "✓" if res.success else "✗"
         print(f" {icon} {res.target}: {res.message}")
@@ -435,7 +442,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_eject.add_argument("targets", nargs="+", help="Disk identifier(s) (e.g. disk8s1) or volume name/mountpoint")
 
     # remount-all
-    subparsers.add_parser("remount-all", help="Remount previously ejected drives")
+    p_remount_all = subparsers.add_parser("remount-all", help="Remount previously ejected drives")
+    p_remount_all.add_argument("--only-recorded", action="store_true", help="Only remount drives recorded in sleep state")
 
     # remount <targets>
     p_remount = subparsers.add_parser("remount", help="Remount specific drive(s) or volume(s)")

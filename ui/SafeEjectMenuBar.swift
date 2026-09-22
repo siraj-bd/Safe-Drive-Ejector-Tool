@@ -26,6 +26,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     var configuredTimerSeconds: Double = 300.0
     var autoAwakeEnabled: Bool = true
     var beforeSleepEnabled: Bool = true
+    var beforeLogoutEnabled: Bool = false
     var isSleepingDueToIdle: Bool = false
     var lastKnownIdleSeconds: Double = 0.0
 
@@ -227,6 +228,18 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemPowerOff),
+            name: NSWorkspace.willPowerOffNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
 
         refreshConfig()
 
@@ -243,10 +256,12 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 let sec = (config["sleep_timer_seconds"] as? NSNumber)?.doubleValue ?? 300.0
                 let awake = (config["remount_on_wake"] as? Bool) ?? true
                 let sleepEject = (config["eject_on_sleep"] as? Bool) ?? true
+                let logoutEject = (config["eject_before_logout"] as? Bool) ?? false
                 DispatchQueue.main.async {
                     self.configuredTimerSeconds = sec
                     self.autoAwakeEnabled = awake
                     self.beforeSleepEnabled = sleepEject
+                    self.beforeLogoutEnabled = logoutEject
                 }
             }
         }
@@ -255,7 +270,8 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     @objc func handleSystemSleep(_ notification: Notification) {
         NSLog("SafeEjectMenuBar: macOS System will sleep (beforeSleepEnabled: \(beforeSleepEnabled))")
         if beforeSleepEnabled {
-            runCLICommand(["eject-now"])
+            // Safe unmount volumes before system sleep without physical eject
+            runCLICommand(["idle-sleep"])
         }
     }
 
@@ -263,8 +279,30 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         NSLog("SafeEjectMenuBar: macOS System did wake (autoAwakeEnabled: \(autoAwakeEnabled))")
         if autoAwakeEnabled {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.runCLICommand(["remount-all"])
+                self?.runCLICommand(["remount-all", "--only-recorded"])
             }
+        }
+    }
+
+    @objc func handleSystemPowerOff(_ notification: Notification) {
+        NSLog("SafeEjectMenuBar: macOS System will power off / logout (beforeLogoutEnabled: \(beforeLogoutEnabled))")
+        if beforeLogoutEnabled {
+            // Synchronously unmount drives so OS does not shut down before completion
+            let task = Process()
+            task.launchPath = self.pythonPath
+            task.arguments = [self.scriptPath, "idle-sleep"]
+            try? task.run()
+            task.waitUntilExit()
+        }
+    }
+
+    @objc func handleAppWillTerminate(_ notification: Notification) {
+        if beforeLogoutEnabled {
+            let task = Process()
+            task.launchPath = self.pythonPath
+            task.arguments = [self.scriptPath, "idle-sleep"]
+            try? task.run()
+            task.waitUntilExit()
         }
     }
 
@@ -278,7 +316,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 isSleepingDueToIdle = false
                 NSLog("SafeEjectMenuBar: User touch detected (<3s). Auto-awakening drives...")
                 if autoAwakeEnabled {
-                    runCLICommand(["remount-all"])
+                    runCLICommand(["remount-all", "--only-recorded"])
                 }
             }
         }
@@ -508,6 +546,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 } else if id == "startAtLoginCheck" {
                     runCLICommand(["config", "set", "start_at_login", checked ? "true" : "false"])
                 } else if id == "beforeLogoutCheck" {
+                    self.beforeLogoutEnabled = checked
                     runCLICommand(["config", "set", "eject_before_logout", checked ? "true" : "false"])
                 } else if id == "ejectedDiskCheck" {
                     if checked {
@@ -579,6 +618,14 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
     func runCLICommand(_ args: [String]) {
         guard !scriptPath.isEmpty else { return }
+        let cmd = args.first ?? ""
+        let targetParam = args.dropFirst().joined(separator: ", ")
+
+        DispatchQueue.main.async {
+            let startJs = "if(window.onOperationStart){ window.onOperationStart('\(cmd)', '\(targetParam)'); }"
+            self.webView.evaluateJavaScript(startJs, completionHandler: nil)
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
             task.launchPath = self.pythonPath
@@ -586,11 +633,10 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             try? task.run()
             task.waitUntilExit()
             let success = (task.terminationStatus == 0)
-            let cmd = args.first ?? ""
             DispatchQueue.main.async {
                 self.syncRealDriveState()
-                let js = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success)); }"
-                self.webView.evaluateJavaScript(js, completionHandler: nil)
+                let finishJs = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success)); }"
+                self.webView.evaluateJavaScript(finishJs, completionHandler: nil)
             }
         }
     }
