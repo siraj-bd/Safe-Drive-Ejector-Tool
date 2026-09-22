@@ -754,6 +754,77 @@
       color: #ffffff;
       white-space: nowrap;
       overflow: hidden;
+      cursor: pointer;
+    }
+
+    /* Drive Hover Details Tooltip Popup */
+    .drive-hover-popup {
+      position: fixed;
+      z-index: 999999;
+      pointer-events: none;
+      background: rgba(14, 18, 26, 0.96);
+      border: 1px solid rgba(255, 65, 65, 0.6);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 0 16px rgba(255, 65, 65, 0.25);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 8.5px;
+      color: #e2e8f0;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      min-width: 170px;
+      max-width: 260px;
+      line-height: 1.45;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(3px);
+      transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    }
+    .drive-hover-popup.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    .popup-title {
+      font-weight: 700;
+      color: #ffffff;
+      font-size: 9.5px;
+      margin-bottom: 3px;
+      letter-spacing: 0.2px;
+      word-break: break-word;
+    }
+    .popup-divider {
+      height: 1px;
+      background: linear-gradient(90deg, rgba(255, 75, 75, 0.8) 0%, rgba(255, 255, 255, 0.15) 100%);
+      margin: 3px 0 5px 0;
+    }
+    .popup-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+    .popup-label {
+      color: #94a3b8;
+      font-size: 8px;
+      flex-shrink: 0;
+      text-transform: capitalize;
+    }
+    .popup-val {
+      color: #f1f5f9;
+      font-weight: 500;
+      font-size: 8.5px;
+      text-align: right;
+      word-break: break-all;
+    }
+    .popup-val.val-highlight {
+      color: #4ade80;
+      font-weight: 600;
+    }
+    .popup-val.val-type {
+      color: #60a5fa;
+      font-weight: 600;
     }
 
     .driver-actions-wrap {
@@ -1854,22 +1925,128 @@
       return s[(v - 20) % 10] || s[v] || s[0];
     }
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function showDriveHoverPopup(drive, event) {
+      const popup = document.getElementById("driveHoverPopup");
+      if (!popup) return;
+      if (!drive || !drive.meta) {
+        popup.classList.remove("visible");
+        popup.style.display = "none";
+        return;
+      }
+      const meta = drive.meta;
+      let html = `<div class="popup-title">${escapeHtml(meta.title)}</div><div class="popup-divider"></div>`;
+      if (meta.is_parent) {
+        html += `
+          <div class="popup-row"><span class="popup-label">Location:</span><span class="popup-val">${escapeHtml(meta.location)}</span></div>
+          <div class="popup-row"><span class="popup-label">Capacity:</span><span class="popup-val val-highlight">${escapeHtml(meta.capacity)}</span></div>
+          <div class="popup-row"><span class="popup-label">Child Count:</span><span class="popup-val">${meta.child_count}</span></div>
+          <div class="popup-row"><span class="popup-label">Type:</span><span class="popup-val val-type">${escapeHtml(meta.type)}</span></div>
+        `;
+      } else {
+        const mountLabel = meta.drive_letter ? "Mount Path:" : "Mount Point:";
+        html += `
+          ${meta.drive_letter ? `<div class="popup-row"><span class="popup-label">Drive Letter:</span><span class="popup-val">${escapeHtml(meta.drive_letter)}</span></div>` : ''}
+          <div class="popup-row"><span class="popup-label">${mountLabel}</span><span class="popup-val">${escapeHtml(meta.mount_point)}</span></div>
+          <div class="popup-row"><span class="popup-label">Capacity:</span><span class="popup-val val-highlight">${escapeHtml(meta.capacity)}</span></div>
+          <div class="popup-row"><span class="popup-label">Type:</span><span class="popup-val val-type">${escapeHtml(meta.type)}</span></div>
+        `;
+      }
+      popup.innerHTML = html;
+      popup.style.display = "block";
+      popup.classList.add("visible");
+      updateDriveHoverPopupPos(event);
+    }
+
+    function updateDriveHoverPopupPos(event) {
+      const popup = document.getElementById("driveHoverPopup");
+      if (!popup || !popup.classList.contains("visible")) return;
+      const pad = 10;
+      let x = (event.clientX || 0) + 14;
+      let y = (event.clientY || 0) - 10;
+      
+      const pw = popup.offsetWidth || 190;
+      const ph = popup.offsetHeight || 90;
+      const winW = window.innerWidth;
+      const winH = window.innerHeight;
+
+      if (x + pw > winW - pad) {
+        x = Math.max(pad, (event.clientX || 0) - pw - 14);
+      }
+      if (y + ph > winH - pad) {
+        y = Math.max(pad, winH - ph - pad);
+      }
+      if (y < pad) y = pad;
+
+      popup.style.left = `${x}px`;
+      popup.style.top = `${y}px`;
+    }
+
+    function hideDriveHoverPopup() {
+      const popup = document.getElementById("driveHoverPopup");
+      if (popup) {
+        popup.classList.remove("visible");
+        popup.style.display = "none";
+      }
+    }
+
     function renderDriveNames() {
       for (let i = 1; i <= 4; i++) {
         const slotNum = currentDriveOffset + i - 1; // 1-based drive number
         const drive = currentDrives[slotNum - 1];
         const nameElem = document.getElementById(`driver${i}Name`);
         const cbElem = document.getElementById(`checkDriver${i}`);
+        const wrapElem = nameElem ? nameElem.closest('.driver-name-wrap') : null;
 
         if (nameElem) {
           if (drive) {
-            // Strictly Disk Utility Device Node (e.g. "disk8s1", "disk9s1") - NO custom labels
+            // Strictly System Device Identifier (e.g. "disk7", "disk8s1", "disk9s1", "PhysicalDrive1", "E:")
             const devId = (drive.id || drive.device_id || `disk${slotNum}`).replace(/^\/dev\//, '');
             nameElem.textContent = devId;
-            nameElem.title = `${devId} [Slot #${slotNum}]`;
+            const meta = drive.meta;
+            if (meta) {
+              if (meta.is_parent) {
+                nameElem.title = `${meta.title}\n• Location: ${meta.location}\n• Capacity: ${meta.capacity}\n• Child Count: ${meta.child_count}\n• Type: ${meta.type}`;
+              } else {
+                const mountLabel = meta.drive_letter ? "Mount Path" : "Mount Point";
+                const letterStr = meta.drive_letter ? `\n• Drive Letter: ${meta.drive_letter}` : "";
+                nameElem.title = `${meta.title}${letterStr}\n• ${mountLabel}: ${meta.mount_point}\n• Capacity: ${meta.capacity}\n• Type: ${meta.type}`;
+              }
+            } else {
+              nameElem.title = `${devId} [Slot #${slotNum}]`;
+            }
+
+            // Bind interactive hover popup handlers
+            if (wrapElem) {
+              wrapElem.style.cursor = "pointer";
+              wrapElem.onmouseenter = function(e) {
+                showDriveHoverPopup(drive, e);
+              };
+              wrapElem.onmousemove = function(e) {
+                updateDriveHoverPopupPos(e);
+              };
+              wrapElem.onmouseleave = function(e) {
+                hideDriveHoverPopup();
+              };
+            }
           } else {
             nameElem.textContent = `disk${slotNum}`;
             nameElem.title = `disk${slotNum} (No drive detected)`;
+            if (wrapElem) {
+              wrapElem.style.cursor = "default";
+              wrapElem.onmouseenter = null;
+              wrapElem.onmousemove = null;
+              wrapElem.onmouseleave = null;
+            }
           }
         }
 
@@ -2207,7 +2384,15 @@
               parent_id: parentId,
               child_ids: childIds,
               mounted: validChildVolumes.length > 0 ? validChildVolumes.some(v => v.is_mounted) : (d.is_mounted !== false),
-              uuid: d.primary_uuid || parentId
+              uuid: d.primary_uuid || parentId,
+              meta: {
+                is_parent: true,
+                title: d.name || parentId,
+                location: d.location || (d.is_external ? "External" : "Internal"),
+                capacity: d.decimal_size || d.human_size || "Unknown",
+                child_count: d.child_count || (d.volumes ? d.volumes.length : childIds.length) || childIds.length,
+                type: d.media_type || "Solid state",
+              }
             });
           }
 
@@ -2222,7 +2407,15 @@
                 parent_id: parentId,
                 child_ids: [],
                 mounted: v.is_mounted === true,
-                uuid: v.uuid || childId
+                uuid: v.uuid || childId,
+                meta: {
+                  is_parent: false,
+                  title: v.name || childId,
+                  mount_point: v.mount_point || (v.is_mounted ? (childId.includes(":") ? childId + "\\" : `/Volumes/${v.name || childId}`) : "Not mounted"),
+                  drive_letter: v.drive_letter || (childId.includes(":") ? childId : ""),
+                  capacity: v.decimal_size || v.human_size || "Unknown",
+                  type: v.type_desc || v.fs_type || "Volume",
+                }
               });
             }
           });
@@ -2274,5 +2467,8 @@
       }
     };
   </script>
+
+  <!-- Dynamic Drive Hover Details Tooltip Popup -->
+  <div id="driveHoverPopup" class="drive-hover-popup" style="display: none;"></div>
 </body>
 </html>

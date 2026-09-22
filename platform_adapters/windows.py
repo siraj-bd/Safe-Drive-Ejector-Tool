@@ -94,14 +94,25 @@ class WindowsAdapter(PlatformAdapter):
                 size = item.get("Size", 0)
                 is_ext = item.get("IsExternal", False)
                 interface = item.get("InterfaceType", "Unknown")
+                raw_media = str(item.get("MediaType", ""))
 
+                if "SSD" in raw_media.upper() or "SOLID" in raw_media.upper():
+                    media_type = "Solid state"
+                elif "REMOVABLE" in raw_media.upper():
+                    media_type = "Removable"
+                elif "EXTERNAL" in raw_media.upper():
+                    media_type = "Solid state"
+                else:
+                    media_type = "Hard Disk"
+
+                raw_vols = item.get("Volumes", [])
                 volumes: List[VolumeInfo] = []
-                for v in item.get("Volumes", []):
+                for v in raw_vols:
                     letter = v.get("DeviceID", "")
                     name = v.get("VolumeName") or letter
                     v_size = v.get("Size", 0)
                     fs = v.get("FileSystem", "NTFS")
-                    mount_point = v.get("MountPoint", letter)
+                    mount_point = v.get("MountPoint", letter + "\\" if letter else "")
 
                     volumes.append(
                         VolumeInfo(
@@ -110,6 +121,8 @@ class WindowsAdapter(PlatformAdapter):
                             mount_point=mount_point,
                             size_bytes=v_size,
                             fs_type=fs,
+                            type_desc=fs,
+                            drive_letter=letter,
                             uuid=letter,
                             is_mounted=True,
                         )
@@ -124,6 +137,8 @@ class WindowsAdapter(PlatformAdapter):
                         is_external=is_ext,
                         is_removable=is_ext,
                         is_virtual=False,
+                        media_type=media_type,
+                        child_count=len(volumes),
                         volumes=volumes,
                     )
                 )

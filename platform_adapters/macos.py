@@ -76,6 +76,17 @@ class MacOSAdapter(PlatformAdapter):
                 mount_pt = part.get("MountPoint")
                 fs = part.get("Content", "")
 
+                type_desc = part.get("FilesystemUserVisibleName") or ""
+                if not type_desc:
+                    if fs == "EFI":
+                        type_desc = "EFI System Partition"
+                    elif fs in ["Apple_HFS", "Apple_HFSX"]:
+                        type_desc = "Mac OS Extended"
+                    elif fs == "Microsoft Basic Data":
+                        type_desc = "Windows Data"
+                    elif fs:
+                        type_desc = fs
+
                 if dev_id and fs != "Apple_APFS":
                     volumes.append(
                         VolumeInfo(
@@ -84,6 +95,7 @@ class MacOSAdapter(PlatformAdapter):
                             mount_point=mount_pt,
                             size_bytes=size,
                             fs_type=fs,
+                            type_desc=type_desc,
                             uuid=uuid,
                             is_mounted=bool(mount_pt),
                         )
@@ -97,18 +109,18 @@ class MacOSAdapter(PlatformAdapter):
                 size = apfs_vol.get("Size", 0)
                 mount_pt = apfs_vol.get("MountPoint")
 
-                if dev_id:
-                    volumes.append(
-                        VolumeInfo(
-                            device_id=dev_id,
-                            name=vol_name or dev_id,
-                            mount_point=mount_pt,
-                            size_bytes=size,
-                            fs_type="APFS",
-                            uuid=uuid,
-                            is_mounted=bool(mount_pt),
-                        )
+                volumes.append(
+                    VolumeInfo(
+                        device_id=dev_id,
+                        name=vol_name or dev_id,
+                        mount_point=mount_pt,
+                        size_bytes=size,
+                        fs_type="APFS",
+                        type_desc="APFS Volume",
+                        uuid=uuid,
+                        is_mounted=bool(mount_pt),
                     )
+                )
 
             # Find parent if this item is an APFS Container
             physical_stores = item.get("APFSPhysicalStores", [])
@@ -138,8 +150,8 @@ class MacOSAdapter(PlatformAdapter):
                 return None
 
         name = (
-            info.get("MediaName")
-            or info.get("IORegistryEntryName")
+            info.get("IORegistryEntryName")
+            or info.get("MediaName")
             or info.get("VolumeName")
             or disk_id
         )
@@ -155,6 +167,25 @@ class MacOSAdapter(PlatformAdapter):
         # A physical drive is external if Internal is False and (RemovableMediaOrExternalDevice or USB/Thunderbolt/etc)
         is_external = (not is_internal) and (is_removable_media or bus_protocol.upper() in ["USB", "THUNDERBOLT", "FIREWIRE", "SD"])
 
+        # Determine media type dynamically from OS
+        if info.get("SolidState") is True:
+            media_type = "Solid state"
+        elif is_virtual:
+            media_type = "Disk Image"
+        elif info.get("MediaType"):
+            media_type = info.get("MediaType")
+        elif info.get("RemovableMedia"):
+            media_type = "Removable"
+        else:
+            media_type = "Hard Disk"
+
+        # Count child partitions/volumes detected by OS
+        partitions_count = info.get("PartitionsCount", 0)
+        if partitions_count > 0:
+            child_count = partitions_count
+        else:
+            child_count = len(volumes)
+
         # If this is a synthesized container that has no direct physical store and volumes are empty,
         # or it's a virtual container whose volumes were already absorbed by the physical parent, skip if empty
         if not volumes and info.get("MountPoint"):
@@ -165,6 +196,7 @@ class MacOSAdapter(PlatformAdapter):
                     mount_point=info.get("MountPoint"),
                     size_bytes=size_bytes,
                     fs_type=info.get("FilesystemType", ""),
+                    type_desc=info.get("FilesystemUserVisibleName") or "Volume",
                     uuid=info.get("VolumeUUID", ""),
                     is_mounted=True,
                 )
@@ -178,6 +210,8 @@ class MacOSAdapter(PlatformAdapter):
             is_external=is_external,
             is_removable=is_ejectable or is_removable_media,
             is_virtual=is_virtual,
+            media_type=media_type,
+            child_count=child_count,
             volumes=volumes,
         )
 

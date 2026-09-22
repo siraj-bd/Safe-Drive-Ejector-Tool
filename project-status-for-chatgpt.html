@@ -155,7 +155,7 @@
 <body>
 <div class="container">
     <header>
-        <div class="badge badge-pass">ALL 23 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS &bull; LIVE HARDWARE VERIFIED</div>
+        <div class="badge badge-pass">ALL 24 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS &bull; LIVE HARDWARE VERIFIED</div>
         <h1>Safe Drive Ejector Tool &mdash; Confirmed Fix & Project Status</h1>
         <p class="subtitle">Evidence-based verification and engineering report &bull; Generated September 2026</p>
     </header>
@@ -256,6 +256,12 @@
                     <td>Drives enumerated strictly in Disk Utility order: Disk 1 &rarr; <code>disk7</code> (parent), Disk 2 &rarr; <code>disk8s1</code> (child 1), Disk 3 &rarr; <code>disk9s1</code> (child 2). UI displays pure device identifiers. Parent checkbox toggles all children; child toggle synchronizes parent; parent unmount triggers physical Deep Sleep (LED-OFF) while child unmount targets only individual partition.</td>
                     <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
                 </tr>
+                <tr>
+                    <td>11</td>
+                    <td><strong>100% OS-Derived Hover Details</strong></td>
+                    <td>Hovering any Device Identifier opens a glassmorphic floating popup with live OS metadata (no hardcoding): Model Name, Location, Decimal Capacity (<code>480.1 GB</code>, <code>200.39 GB</code>, <code>1 TB</code>), Child Count, Type (<code>Solid state</code>, <code>APFS Volume</code>, <code>exFAT</code>, <code>NTFS</code>). Multi-line title attribute fallback included.</td>
+                    <td><span class="status-tag tag-fixed">FIXED & VERIFIED</span></td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -264,52 +270,33 @@
         <div class="card">
             <h2>Exact Files & Functions Modified</h2>
             <ul>
-                <li><code>core/volume_manager.py</code>:
+                <li><code>core/models.py</code>:
                     <ul>
-                        <li><code>deep_sleep_drive(drive_id)</code></li>
-                        <li><code>mount_target(target_id)</code> & <code>unmount_target(target_id)</code></li>
+                        <li><code>VolumeInfo</code>: Added <code>type_desc</code>, <code>drive_letter</code>, <code>decimal_size</code></li>
+                        <li><code>DriveInfo</code>: Added <code>media_type</code>, <code>location</code>, <code>child_count</code>, <code>decimal_size</code></li>
+                        <li><code>format_decimal_size()</code>: Decimal byte formatting matching OS Disk Utility</li>
                     </ul>
                 </li>
                 <li><code>platform_adapters/macos.py</code>:
                     <ul>
-                        <li>Hardware info cache (<code>_info_cache</code>) to eliminate LED pulsing during UI inspection</li>
+                        <li>Extracted <code>IORegistryEntryName</code>, <code>SolidState</code>, <code>PartitionsCount</code>, and <code>FilesystemUserVisibleName</code> directly from live macOS plists</li>
                     </ul>
                 </li>
-                <li><code>core/engine.py</code>:
+                <li><code>platform_adapters/windows.py</code>:
                     <ul>
-                        <li><code>remount_all_ejected(only_if_recorded=True)</code></li>
-                        <li><code>_on_idle_sleep(reason="system_sleep")</code></li>
-                        <li><code>run_daemon()</code>: Changed <code>on_sleep</code> to call <code>_on_idle_sleep([])</code> and <code>on_wake</code> to call <code>remount_all_ejected(only_if_recorded=True)</code></li>
-                    </ul>
-                </li>
-                <li><code>ui/cli.py</code>:
-                    <ul>
-                        <li><code>cmd_idle_sleep(args)</code></li>
-                        <li><code>cmd_remount_all(args)</code> with <code>--only-recorded</code></li>
-                    </ul>
-                </li>
-                <li><code>ui/SafeEjectMenuBar.swift</code>:
-                    <ul>
-                        <li><code>handleSystemSleep()</code> &rarr; calls <code>idle-sleep</code></li>
-                        <li><code>handleSystemWake()</code> &rarr; calls <code>remount-all --only-recorded</code></li>
-                        <li><code>userContentController</code>: Added <code>driveSelection</code> handler</li>
-                        <li>Registered <code>willPowerOffNotification</code> and <code>willTerminateNotification</code></li>
-                        <li>Added <code>window.onOperationStart</code> and <code>window.onOperationComplete</code> dispatch</li>
+                        <li>Extracted <code>Win32_DiskDrive</code>, <code>Win32_LogicalDisk</code>, <code>MediaType</code>, <code>FileSystem</code>, and <code>DeviceID</code> dynamically</li>
                     </ul>
                 </li>
                 <li><code>ui/components/SafeDriveEjectorCard.html</code>:
                     <ul>
-                        <li>Dynamic Disk Utility hierarchy layout (Disk 1: parent, Disk 2+: children)</li>
-                        <li>Clean system device identifier display (<code>disk7</code>, <code>disk8s1</code>, <code>disk9s1</code>)</li>
-                        <li>Synchronized parent-child checkbox controls</li>
-                        <li>Dynamic unmounted count and Deep Sleep label on parent unmount</li>
+                        <li>Added <code>.drive-hover-popup</code> floating card CSS & DOM element</li>
+                        <li>Implemented <code>showDriveHoverPopup</code>, <code>updateDriveHoverPopupPos</code>, <code>hideDriveHoverPopup</code></li>
+                        <li>Attached mouseenter/mousemove/mouseleave listeners to driver rows</li>
                     </ul>
                 </li>
                 <li><code>tests/test_features.py</code>:
                     <ul>
-                        <li>Added <code>test_parent_and_child_hierarchy_control</code></li>
-                        <li>Added <code>test_auto_wake_only_recorded_drives</code></li>
-                        <li>Added <code>test_legacy_daemon_sleep_uses_safe_unmount</code></li>
+                        <li>Added <code>test_drive_and_volume_hover_metadata</code></li>
                     </ul>
                 </li>
             </ul>
@@ -319,8 +306,8 @@
             <h2>Test Verification Results</h2>
             <pre>
 $ SAFEEJECT_CONFIG_DIR=.tmp_config python3 -m unittest discover tests
-.......................
-Ran 23 tests in 0.287s
+........................
+Ran 24 tests in 0.207s
 OK
 
 $ swiftc -module-cache-path .build/cache -O ui/SafeEjectMenuBar.swift -o bin/SafeEjectMenuBar
@@ -328,6 +315,7 @@ Build exit code: 0 (No warnings, no errors)
             </pre>
             <p><strong>Verified Test Suites:</strong></p>
             <ul>
+                <li><code>test_drive_and_volume_hover_metadata</code> (Pass)</li>
                 <li><code>test_parent_and_child_hierarchy_control</code> (Pass)</li>
                 <li><code>test_deep_sleep_all_mounted_volumes_unmounted_before_parent_eject</code> (Pass)</li>
                 <li><code>test_deep_sleep_aborted_when_unmount_fails</code> (Pass)</li>

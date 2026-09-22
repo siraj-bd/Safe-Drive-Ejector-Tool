@@ -464,7 +464,67 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertTrue(res_mount_parent.success)
         self.assertIn("disk7", adapter.mounted)
 
+    def test_drive_and_volume_hover_metadata(self):
+        """Verify dynamic OS metadata for hover tooltip (macOS and Windows formats)."""
+        # macOS Parent & Child Volumes
+        vol1 = VolumeInfo(
+            device_id="disk8s1",
+            name="support-external-drive",
+            mount_point="/Volumes/support-external-drive",
+            size_bytes=200394182656,
+            fs_type="APFS",
+            type_desc="APFS Volume",
+        )
+        vol2 = VolumeInfo(
+            device_id="disk9s1",
+            name="Macbook Backup",
+            mount_point="/Volumes/Macbook Backup",
+            size_bytes=279499014144,
+            fs_type="APFS",
+            type_desc="APFS Volume",
+        )
+        parent = DriveInfo(
+            id="disk7",
+            name="StoreJet Transcend Media",
+            size_bytes=480103981056,
+            is_external=True,
+            media_type="Solid state",
+            child_count=3,
+            volumes=[vol1, vol2],
+        )
+
+        p_dict = parent.to_dict()
+        self.assertEqual(p_dict["name"], "StoreJet Transcend Media")
+        self.assertEqual(p_dict["location"], "External")
+        self.assertEqual(p_dict["decimal_size"], "480.1 GB")
+        self.assertEqual(p_dict["child_count"], 3)
+        self.assertEqual(p_dict["media_type"], "Solid state")
+
+        v1_dict = vol1.to_dict()
+        self.assertEqual(v1_dict["name"], "support-external-drive")
+        self.assertEqual(v1_dict["mount_point"], "/Volumes/support-external-drive")
+        self.assertEqual(v1_dict["decimal_size"], "200.39 GB")
+        self.assertEqual(v1_dict["type_desc"], "APFS Volume")
+
+        # Windows Parent & Volume
+        win_vol = VolumeInfo(
+            device_id="E:",
+            name="My Backup",
+            mount_point="E:\\",
+            size_bytes=1000000000000,
+            fs_type="exFAT",
+            type_desc="exFAT",
+            drive_letter="E:",
+        )
+        win_dict = win_vol.to_dict()
+        self.assertEqual(win_dict["name"], "My Backup")
+        self.assertEqual(win_dict["drive_letter"], "E:")
+        self.assertEqual(win_dict["mount_point"], "E:\\")
+        self.assertEqual(win_dict["type_desc"], "exFAT")
+        self.assertEqual(win_dict["decimal_size"], "1 TB")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
