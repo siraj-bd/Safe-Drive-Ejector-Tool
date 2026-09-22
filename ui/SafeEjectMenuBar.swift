@@ -18,6 +18,8 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     var scriptPath = ""
     var htmlCardPath = ""
     var globalClickMonitor: Any?
+    var livePollingTimer: Timer?
+    var isSyncingState = false
 
     override init() {
         super.init()
@@ -27,34 +29,80 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     }
 
     func locatePaths() {
-        let bundleDir = Bundle.main.bundlePath
-        let currentDir = FileManager.default.currentDirectoryPath
-        let candidates = [
-            (currentDir as NSString).appendingPathComponent("main.py"),
-            ((bundleDir as NSString).deletingLastPathComponent as NSString).appendingPathComponent("main.py"),
-            "/Volumes/backup-software/workplace/safely-disk-ejector-tool/main.py"
-        ]
+        var potentialRoots: [String] = []
 
-        for path in candidates {
-            if FileManager.default.fileExists(atPath: path) {
-                scriptPath = path
+        // 1. Environment variable override
+        if let envRoot = ProcessInfo.processInfo.environment["SAFEEJECT_PROJECT_DIR"], !envRoot.isEmpty {
+            potentialRoots.append(envRoot)
+        }
+
+        // 2. Current working directory
+        let cwd = FileManager.default.currentDirectoryPath
+        potentialRoots.append(cwd)
+
+        // 3. Executable path and ancestor directories
+        let execPath = CommandLine.arguments.first ?? Bundle.main.executablePath ?? ""
+        if !execPath.isEmpty {
+            let execURL = URL(fileURLWithPath: execPath).resolvingSymlinksInPath()
+            let execDir = execURL.deletingLastPathComponent().path
+            potentialRoots.append(execDir)
+            let parentDir = execURL.deletingLastPathComponent().deletingLastPathComponent().path
+            potentialRoots.append(parentDir)
+            let grandparentDir = execURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+            potentialRoots.append(grandparentDir)
+        }
+
+        // 4. Bundle path and parent directories
+        let bundlePath = Bundle.main.bundlePath
+        let bundleURL = URL(fileURLWithPath: bundlePath).resolvingSymlinksInPath()
+        potentialRoots.append(bundleURL.path)
+        potentialRoots.append(bundleURL.deletingLastPathComponent().path)
+
+        // Find root where main.py exists
+        var foundRoot: String?
+        for candidate in potentialRoots {
+            let testMain = (candidate as NSString).appendingPathComponent("main.py")
+            if FileManager.default.fileExists(atPath: testMain) {
+                foundRoot = candidate
+                scriptPath = testMain
                 break
             }
         }
 
-        if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/python3") {
-            pythonPath = "/opt/homebrew/bin/python3"
-        } else if FileManager.default.fileExists(atPath: "/usr/local/bin/python3") {
-            pythonPath = "/usr/local/bin/python3"
+        // Locate SafeDriveEjectorCard.html
+        var htmlCandidates: [String] = []
+        if let root = foundRoot {
+            htmlCandidates.append((root as NSString).appendingPathComponent("ui/components/SafeDriveEjectorCard.html"))
+        }
+        for candidate in potentialRoots {
+            htmlCandidates.append((candidate as NSString).appendingPathComponent("ui/components/SafeDriveEjectorCard.html"))
+            htmlCandidates.append((candidate as NSString).appendingPathComponent("SafeDriveEjectorCard.html"))
+            if let resPath = Bundle.main.resourcePath {
+                htmlCandidates.append((resPath as NSString).appendingPathComponent("SafeDriveEjectorCard.html"))
+                htmlCandidates.append((resPath as NSString).appendingPathComponent("ui/components/SafeDriveEjectorCard.html"))
+            }
         }
 
-        let htmlCandidates = [
-            (currentDir as NSString).appendingPathComponent("ui/components/SafeDriveEjectorCard.html"),
-            "/Volumes/backup-software/workplace/safely-disk-ejector-tool/ui/components/SafeDriveEjectorCard.html"
-        ]
         for path in htmlCandidates {
             if FileManager.default.fileExists(atPath: path) {
                 htmlCardPath = path
+                break
+            }
+        }
+
+        // Detect python3 executable
+        var pythonCandidates: [String] = []
+        if let root = foundRoot {
+            pythonCandidates.append((root as NSString).appendingPathComponent(".venv/bin/python3"))
+            pythonCandidates.append((root as NSString).appendingPathComponent("venv/bin/python3"))
+        }
+        pythonCandidates.append("/opt/homebrew/bin/python3")
+        pythonCandidates.append("/usr/local/bin/python3")
+        pythonCandidates.append("/usr/bin/python3")
+
+        for path in pythonCandidates {
+            if FileManager.default.fileExists(atPath: path) {
+                pythonPath = path
                 break
             }
         }
@@ -170,7 +218,6 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         if webView.url == nil {
             loadCardHTML()
         }
-        syncRealDriveState()
         positionPanel()
         panel.alphaValue = 0.0
         panel.makeKeyAndOrderFront(nil)
@@ -179,6 +226,9 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             panel.animator().alphaValue = 1.0
         }
         button.image = createDiamondToggleIcon(isActive: true)
+
+        // Start real-time drive status polling while panel is visible
+        startLivePolling()
 
         // Close panel when user clicks outside
         if globalClickMonitor == nil {
@@ -200,6 +250,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
     func closePanel() {
         guard panel.isVisible else { return }
+        stopLivePolling()
         if let monitor = globalClickMonitor {
             NSEvent.removeMonitor(monitor)
             globalClickMonitor = nil
@@ -211,6 +262,23 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             self?.panel.orderOut(nil)
             self?.statusItem.button?.image = self?.createDiamondToggleIcon(isActive: false)
         })
+    }
+
+    func startLivePolling() {
+        stopLivePolling()
+        syncRealDriveState()
+        livePollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.panel.isVisible else { return }
+            self.syncRealDriveState()
+        }
+        if let timer = livePollingTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    func stopLivePolling() {
+        livePollingTimer?.invalidate()
+        livePollingTimer = nil
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -241,12 +309,17 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     }
 
     func syncRealDriveState() {
+        if isSyncingState { return }
+        isSyncingState = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { self?.isSyncingState = false }
             guard let self = self else { return }
             let statusObj = self.queryStatusJSON()
+            guard !statusObj.isEmpty else { return }
             if let jsonData = try? JSONSerialization.data(withJSONObject: statusObj),
                let jsonString = String(data: jsonData, encoding: .utf8) {
                 DispatchQueue.main.async {
+                    guard self.panel.isVisible else { return }
                     let js = "if(window.updateUIState){ window.updateUIState(\(jsonString)); }"
                     self.webView.evaluateJavaScript(js, completionHandler: nil)
                 }
