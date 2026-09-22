@@ -27,6 +27,7 @@ class MacOSAdapter(PlatformAdapter):
     def __init__(self):
         self._run_loop = None
         self._stop_requested = False
+        self._info_cache: Dict[str, dict] = {}
 
     def get_drives(self) -> List[DriveInfo]:
         """Enumerate all drives using macOS diskutil plist."""
@@ -125,13 +126,16 @@ class MacOSAdapter(PlatformAdapter):
         return grouped
 
     def _get_drive_details(self, disk_id: str, volumes: List[VolumeInfo]) -> Optional[DriveInfo]:
-        """Fetch detailed hardware info for a whole disk using diskutil info -plist."""
-        try:
-            proc = subprocess.run(["diskutil", "info", "-plist", disk_id], capture_output=True, check=True)
-            info = plistlib.loads(proc.stdout)
-        except Exception as e:
-            logger.warning(f"Could not query diskutil info for {disk_id}: {e}")
-            return None
+        """Fetch detailed hardware info for a whole disk using diskutil info -plist (cached to prevent waking sleeping drives)."""
+        info = self._info_cache.get(disk_id)
+        if not info:
+            try:
+                proc = subprocess.run(["diskutil", "info", "-plist", disk_id], capture_output=True, check=True)
+                info = plistlib.loads(proc.stdout)
+                self._info_cache[disk_id] = info
+            except Exception as e:
+                logger.warning(f"Could not query diskutil info for {disk_id}: {e}")
+                return None
 
         name = (
             info.get("MediaName")
@@ -195,6 +199,7 @@ class MacOSAdapter(PlatformAdapter):
         # Run diskutil eject
         proc = subprocess.run(["diskutil", "eject", drive_id], capture_output=True, text=True)
         if proc.returncode == 0:
+            self._info_cache.pop(drive_id, None)
             return EjectResult(
                 target=drive_id,
                 success=True,
