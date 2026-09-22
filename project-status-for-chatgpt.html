@@ -155,7 +155,7 @@
 <body>
 <div class="container">
     <header>
-        <div class="badge badge-pass">ALL 17 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS</div>
+        <div class="badge badge-pass">ALL 18 UNIT TESTS PASSING &bull; ZERO BUILD WARNINGS</div>
         <h1>Safe Drive Ejector Tool &mdash; Confirmed Fix & Project Status</h1>
         <p class="subtitle">Evidence-based verification and engineering report &bull; Generated September 2026</p>
     </header>
@@ -262,6 +262,7 @@
                     <ul>
                         <li><code>remount_all_ejected(only_if_recorded=True)</code></li>
                         <li><code>_on_idle_sleep(reason="system_sleep")</code></li>
+                        <li><code>run_daemon()</code>: Changed <code>on_sleep</code> to call <code>_on_idle_sleep([])</code> and <code>on_wake</code> to call <code>remount_all_ejected(only_if_recorded=True)</code></li>
                     </ul>
                 </li>
                 <li><code>ui/cli.py</code>:
@@ -274,6 +275,7 @@
                     <ul>
                         <li><code>handleSystemSleep()</code> &rarr; calls <code>idle-sleep</code></li>
                         <li><code>handleSystemWake()</code> &rarr; calls <code>remount-all --only-recorded</code></li>
+                        <li><code>userContentController</code>: <code>case "unmount"</code> with <code>target == "all"</code> routes to <code>idle-sleep</code> instead of <code>eject-now</code></li>
                         <li>Registered <code>willPowerOffNotification</code> and <code>willTerminateNotification</code></li>
                         <li>Added <code>window.onOperationStart</code> and <code>window.onOperationComplete</code> dispatch</li>
                     </ul>
@@ -282,12 +284,14 @@
                     <ul>
                         <li>Removed <code>#diskCountBars</code></li>
                         <li>Updated <code>syncEjectedCount</code> to output pure numbers</li>
+                        <li>Updated global unmount trigger to start loop with "Safe Unmount"</li>
                         <li>Implemented animated operation progress indicators</li>
                     </ul>
                 </li>
                 <li><code>tests/test_features.py</code>:
                     <ul>
                         <li>Added <code>test_auto_wake_only_recorded_drives</code></li>
+                        <li>Added <code>test_legacy_daemon_sleep_uses_safe_unmount</code></li>
                     </ul>
                 </li>
             </ul>
@@ -297,8 +301,8 @@
             <h2>Test Verification Results</h2>
             <pre>
 $ SAFEEJECT_CONFIG_DIR=.tmp_config python3 -m unittest discover tests
-................
-Ran 17 tests in 0.034s
+..................
+Ran 18 tests in 0.093s
 OK
 
 $ swiftc -module-cache-path .build/cache -O ui/SafeEjectMenuBar.swift -o bin/SafeEjectMenuBar
@@ -306,6 +310,7 @@ Build exit code: 0 (No warnings, no errors)
             </pre>
             <p><strong>Verified Test Suites:</strong></p>
             <ul>
+                <li><code>test_legacy_daemon_sleep_uses_safe_unmount</code> (Pass)</li>
                 <li><code>test_auto_wake_only_recorded_drives</code> (Pass)</li>
                 <li><code>test_idle_sleep_unmounts_without_physical_eject</code> (Pass)</li>
                 <li><code>test_macos_adapter_discovery</code> (Pass)</li>

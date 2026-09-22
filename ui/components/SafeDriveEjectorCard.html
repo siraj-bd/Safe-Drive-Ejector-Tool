@@ -1979,7 +1979,7 @@
           startProcessingLoop("Unmounting", checkedTargets.join(", "));
           postToHost({ action: "unmount", target: "checked", drivers: checkedTargets });
         } else {
-          startProcessingLoop("Unmounting", "All Drivers");
+          startProcessingLoop("Safe Unmount", "All Managed Drives");
           postToHost({ action: "unmount", target: "all", drivers: [] });
         }
       } else {

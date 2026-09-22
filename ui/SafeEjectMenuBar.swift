@@ -484,7 +484,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             if (target == "all" || target == "checked") && !drivers.isEmpty {
                 runCLICommand(["eject"] + drivers)
             } else if target == "all" {
-                runCLICommand(["eject-now"])
+                runCLICommand(["idle-sleep"])
             } else {
                 runCLICommand(["eject", target])
             }

@@ -309,6 +309,41 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertIn("disk8s1", adapter.mounted_volumes)
         self.assertNotIn("disk9s1", adapter.mounted_volumes)
 
+    def test_legacy_daemon_sleep_uses_safe_unmount(self):
+        adapter = FeatureMockAdapter()
+        vol = VolumeInfo(device_id="disk8s1", name="DriveOne", mount_point="/Volumes/DriveOne", is_mounted=True)
+        drive = DriveInfo(id="disk8", name="SSDOne", is_external=True, volumes=[vol])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False, eject_on_sleep=True, remount_on_wake=True)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        captured_callbacks = {}
+        def mock_power_listener(on_sleep, on_wake):
+            captured_callbacks["sleep"] = on_sleep
+            captured_callbacks["wake"] = on_wake
+
+        adapter.start_power_listener = mock_power_listener
+
+        import threading
+        t = threading.Thread(target=engine.run_daemon, daemon=True)
+        t.start()
+        time.sleep(0.05)
+
+        # Trigger sleep callback from power listener
+        captured_callbacks["sleep"]()
+
+        # Volume must be safely unmounted, and drive must NOT be physically ejected
+        self.assertIn("disk8s1", adapter.unmounted_volumes)
+        self.assertNotIn("disk8", adapter.ejected)
+
+        # State must record the sleeping volume
+        state = StateManager.load_ejected_drives()
+        self.assertIn("disk8s1", state.get("volume_identifiers", []))
+
+        # Stop idle monitor
+        engine.idle_monitor.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

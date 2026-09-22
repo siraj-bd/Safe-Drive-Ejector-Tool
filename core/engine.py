@@ -349,13 +349,13 @@ class SafeEjectEngine:
         def on_sleep():
             logger.info("Power event: PRE-SLEEP triggered.")
             if self.config.eject_on_sleep:
-                self.eject_all_external(manual=False)
+                self._on_idle_sleep([])
 
         def on_wake():
             logger.info("Power event: WAKE triggered (Auto Awake).")
             if self.config.remount_on_wake:
                 time.sleep(1.5)
-                self.remount_all_ejected()
+                self.remount_all_ejected(only_if_recorded=True)
 
         try:
             self.adapter.start_power_listener(on_sleep, on_wake)
