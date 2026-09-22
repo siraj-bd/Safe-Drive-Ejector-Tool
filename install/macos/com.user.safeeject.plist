@@ -6,7 +6,7 @@
     <string>com.user.safeeject</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Volumes/backup-software/workplace/safely-disk-ejector-tool/bin/SafeEjectMenuBar</string>
+        <string>__SAFEEJECT_BIN_PATH__</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

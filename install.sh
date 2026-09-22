@@ -31,7 +31,7 @@ if [ "$OS" = "Darwin" ]; then
     mkdir -p "$HOME/Library/LaunchAgents"
     
     # Inject current directory path into plist
-    sed "s|/Volumes/backup-software/workplace/safely-disk-ejector-tool/bin/SafeEjectMenuBar|$DIR/bin/SafeEjectMenuBar|g" "$PLIST_SRC" > "$PLIST_DEST"
+    sed -E "s|__SAFEEJECT_BIN_PATH__|$DIR/bin/SafeEjectMenuBar|g; s|<string>.*bin/SafeEjectMenuBar</string>|<string>$DIR/bin/SafeEjectMenuBar</string>|g" "$PLIST_SRC" > "$PLIST_DEST"
     
     # 3. Load LaunchAgent & Launch app
     echo "[3/3] Starting Safe Drive Ejector Tool in Menu Bar..."

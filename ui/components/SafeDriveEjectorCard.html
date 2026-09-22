@@ -489,15 +489,6 @@
        PAGER BUTTON: Above Drivers List on the Left
        Aligned strictly with the checkbox column boundary (never goes to the left)
        ========================================================================== */
-    .add-wrapper {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      height: 100%;
-    }
-
     /* ==========================================================================
        PAGER BUTTON (From Uiverse.io by Zaikonurami / Zaiko / Aaron Iker)
        Color: Green (#22c55e), compact text, smooth 45deg rotation on expand
@@ -799,6 +790,26 @@
       width: 51px;
     }
 
+    .IconContainer {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      z-index: 2;
+      transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+      margin-left: 1px;
+      flex-shrink: 0;
+    }
+
+    .IconContainer svg {
+      width: 7px;
+      height: 7px;
+      fill: #ffffff;
+    }
+
     /* Mount Color (#64FD1F Neon Lime Green) */
     .bookmarkBtn.mount-btn .IconContainer {
       background: linear-gradient(135deg, #64FD1F 0%, #4ae30e 100%);
@@ -823,26 +834,6 @@
 
     .bookmarkBtn.unmount-btn:hover {
       border-color: rgba(255, 0, 0, 0.5);
-    }
-
-    .IconContainer {
-      width: 12px;
-      height: 12px;
-      border-radius: 2px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      z-index: 2;
-      transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
-      margin-left: 1px;
-      flex-shrink: 0;
-    }
-
-    .IconContainer svg {
-      width: 7px;
-      height: 7px;
-      fill: #ffffff;
     }
 
     .bookmarkBtn .text {
@@ -1799,22 +1790,6 @@
 
       postToHost({ action: "resizePopover", width: targetW, height: targetH });
       renderDriveNames();
-    }
-
-    // Adaptive Drive Name Formatting (Preserves device ID like disk8s1)
-    function formatDriveName(name, scale = currentScale) {
-      if (!name) return "";
-      const trimmed = name.trim();
-      let maxLen = 16;
-      if (scale >= 3) maxLen = 45;
-      else if (scale >= 2) maxLen = 35;
-      else if (scale >= 1.5) maxLen = 26;
-      else if (scale >= 1.25) maxLen = 20;
-
-      if (trimmed.length <= maxLen) return trimmed;
-      const startLen = Math.ceil((maxLen - 3) / 2);
-      const endLen = Math.floor((maxLen - 3) / 2);
-      return trimmed.slice(0, startLen) + "..." + trimmed.slice(-endLen);
     }
 
     function setDriveOffset(offset, event) {
