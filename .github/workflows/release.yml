@@ -151,7 +151,7 @@ jobs:
 
       - name: Merge Universal Binaries, Sign and Build DMG
         env:
-          DMG_NAME: SafeDriveEjector-1.0.1-macOS-Universal.dmg
+          DMG_NAME: SafeDriveEjector-1.0.2-macOS-Universal.dmg
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -178,7 +178,7 @@ jobs:
           echo "=== 2. Strict Codesign Verification ==="
           codesign --verify --deep --strict "dist/Safe Drive Ejector.app"
           echo "=== 3. DMG Verification ==="
-          test -f "dist/SafeDriveEjector-1.0.1-macOS-Universal.dmg"
+          test -f "dist/SafeDriveEjector-1.0.2-macOS-Universal.dmg"
 
       - name: Clean up Apple Developer ID Keychain
         if: always()
@@ -193,7 +193,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SafeDriveEjector-macOS-Universal
-          path: dist/SafeDriveEjector-1.0.1-macOS-Universal.dmg
+          path: dist/SafeDriveEjector-1.0.2-macOS-Universal.dmg
           if-no-files-found: error
 
   # ============================================================================
@@ -223,7 +223,7 @@ jobs:
 
       - name: Build Windows Standalone Executables and Archive
         env:
-          ZIP_NAME: SafeDriveEjector-1.0.1-windows-x64.zip
+          ZIP_NAME: SafeDriveEjector-1.0.2-windows-x64.zip
         run: |
           cmd /c build_windows.bat
 
@@ -239,7 +239,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SafeDriveEjector-Windows-x64
-          path: dist/SafeDriveEjector-1.0.1-windows-x64.zip
+          path: dist/SafeDriveEjector-1.0.2-windows-x64.zip
           if-no-files-found: error
 
   # ============================================================================

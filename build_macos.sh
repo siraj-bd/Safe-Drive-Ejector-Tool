@@ -109,7 +109,7 @@ fi
 # MODE: UNIVERSAL BUILD (Apple Silicon + Intel)
 # ==============================================================================
 if [ "$MODE" = "universal" ]; then
-    DMG_NAME="${DMG_NAME:-SafeDriveEjector-1.0.1-macOS-Universal.dmg}"
+    DMG_NAME="${DMG_NAME:-SafeDriveEjector-1.0.2-macOS-Universal.dmg}"
     DMG_OUTPUT="$DIST_DIR/$DMG_NAME"
 
     echo "======================================================="
@@ -312,7 +312,7 @@ fi
 # ==============================================================================
 # MODE: SINGLE ARCHITECTURE STANDALONE BUILD (Fallback)
 # ==============================================================================
-DMG_NAME="${DMG_NAME:-SafeDriveEjector-1.0.1-macOS-${TARGET_ARCH}.dmg}"
+DMG_NAME="${DMG_NAME:-SafeDriveEjector-1.0.2-macOS-${TARGET_ARCH}.dmg}"
 DMG_OUTPUT="$DIST_DIR/$DMG_NAME"
 
 echo "======================================================="

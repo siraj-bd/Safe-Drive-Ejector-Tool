@@ -52,7 +52,7 @@ copy "%ROOT_DIR%README.md" "%DIST_DIR%\SafeDriveEjector\README.md" >nul
 if exist "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" copy "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" "%DIST_DIR%\SafeDriveEjector\FIRST_LAUNCH_INSTRUCTIONS.txt" >nul
 
 REM 5. Create Standalone ZIP Archive for Distribution
-if not defined ZIP_NAME set "ZIP_NAME=SafeDriveEjector-1.0.1-windows-x64.zip"
+if not defined ZIP_NAME set "ZIP_NAME=SafeDriveEjector-1.0.2-windows-x64.zip"
 echo [5/5] Creating distribution archive %ZIP_NAME%...
 powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\SafeDriveEjector' -DestinationPath '%ROOT_DIR%dist\%ZIP_NAME%' -Force" 2>nul
 
