@@ -179,3 +179,11 @@ Exit Code: 0 (Zero warnings, zero errors)
   - Windows SmartScreen: Approved via *More info > Run anyway*.
   - **No Global Security Compromises**: SIP and Gatekeeper remain fully enabled.
 
+### Intel (x86_64) Verification Status
+- **VERIFIED**: `ARCH=x86_64 ./build_macos.sh` executes cleanly and outputs `dist/SafeDriveEjector-1.0.0-macOS-x86_64.dmg`.
+- **VERIFIED**: DMG mounting, volume icon (`.VolumeIcon.icns`), drag-and-drop symlink, `FIRST_LAUNCH_INSTRUCTIONS.txt`, and bundle code seal verification (`codesign --verify --deep --strict` exit code 0).
+- **VERIFIED (CI)**: GitHub Actions release workflow matrix properly delegates `x86_64` to native Intel runner `macos-15-intel`.
+- **NOT VERIFIED (Local Launch)**: Native Intel launch is not tested locally because current machine is Apple Silicon (`Darwin arm64`).
+- **BLOCKED (Local Cross-Compilation)**: Local `x86_64` Mach-O compilation is blocked by host architecture (Apple Silicon CLT lacks x86_64 Swift runtime static libraries and Homebrew Python is arm64-only). True Intel binaries are built in CI.
+
+
