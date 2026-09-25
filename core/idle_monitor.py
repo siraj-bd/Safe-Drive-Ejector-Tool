@@ -8,13 +8,12 @@ Supports:
 """
 
 import logging
-import os
 import re
 import subprocess
 import sys
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, List, Optional, Set
 
 from core.config import SafeEjectConfig
 from core.models import DriveInfo

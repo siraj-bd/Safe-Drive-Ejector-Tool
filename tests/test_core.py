@@ -2,9 +2,7 @@
 Unit tests for SafeEject core engine, models, and configuration.
 """
 
-import os
 import unittest
-from unittest.mock import MagicMock
 
 from core.config import SafeEjectConfig, StateManager
 from core.engine import SafeEjectEngine
@@ -34,6 +32,7 @@ class MockAdapter(PlatformAdapter):
         return RemountResult(target=drive_id, success=True, message="Mock mounted")
 
     def mount_volume(self, volume_id: str):
+        self.mounted.append(volume_id)
         return RemountResult(target=volume_id, success=True, message="Mock mounted")
 
     def get_blocking_processes(self, mount_point: str):
@@ -50,6 +49,11 @@ class MockAdapter(PlatformAdapter):
 
 
 class TestSafeEjectCore(unittest.TestCase):
+    def setUp(self):
+        StateManager.clear_ejected_drives()
+
+    def tearDown(self):
+        StateManager.clear_ejected_drives()
 
     def test_format_size(self):
         self.assertEqual(format_size(0), "0 B")

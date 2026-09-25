@@ -15,9 +15,8 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from core.config import SafeEjectConfig, StateManager
+from core.config import StateManager
 from core.engine import SafeEjectEngine
-from core.models import DriveInfo, ProcessLockInfo
 
 
 def setup_logger(level_name: str = "INFO"):
@@ -152,34 +151,58 @@ def cmd_eject_single(engine: SafeEjectEngine, args):
     if not targets:
         return
     results = engine.eject_targets(targets)
+    all_success = True
+    failed_messages = []
     for res in results:
         icon = "✓" if res.success else "✗"
         print(f" {icon} {res.message}")
+        if not res.success:
+            all_success = False
+            failed_messages.append(res.message)
         if res.blocking_processes:
             print(f"Blocking processes ({len(res.blocking_processes)}):")
             for p in res.blocking_processes:
                 print(f"  - {p}")
             print()
+    if not all_success:
+        import sys
+        print("\n".join(failed_messages), file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_deep_sleep(engine: SafeEjectEngine, args):
-    """Explicit Deep Sleep (LED OFF) for physical parent target(s)."""
+    """Explicit Deep Sleep (Hardware Silence) for physical parent target(s)."""
     raw_targets = getattr(args, "targets", None) or [getattr(args, "target", "")]
     targets = [t for t in (raw_targets if isinstance(raw_targets, list) else [raw_targets]) if t]
     if not targets:
         print("\nTriggering Deep Sleep for selected drives...")
-        engine._on_idle_sleep([])
+        results = engine._on_idle_sleep([])
+        all_success = all(r.success for r in results) if results else True
+        if not all_success:
+            import sys
+            failed_msgs = [r.message for r in results if not r.success]
+            print("\n".join(failed_msgs), file=sys.stderr)
+            sys.exit(1)
         return
+    all_success = True
+    failed_messages = []
     for t in targets:
-        print(f"\nPutting '{t}' into Deep Sleep (LED OFF)...")
+        print(f"\nPutting '{t}' into Deep Sleep (Hardware Silence)...")
         res = engine.deep_sleep_target(t)
         icon = "✓" if res.success else "✗"
         print(f" {icon} {res.message}\n")
+        if not res.success:
+            all_success = False
+            failed_messages.append(res.message)
         if res.blocking_processes:
             print(f"Blocking processes ({len(res.blocking_processes)}):")
             for p in res.blocking_processes:
                 print(f"  - {p}")
             print()
+    if not all_success:
+        import sys
+        print("\n".join(failed_messages), file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_remount_all(engine: SafeEjectEngine, args):
@@ -190,16 +213,7 @@ def cmd_remount_all(engine: SafeEjectEngine, args):
     volume_ids = state.get("volume_identifiers", [])
 
     if not drive_ids and not volume_ids:
-        if only_recorded:
-            print("\n[Auto-Wake] No recorded sleeping drives/volumes found in state. Skipping unrelated drives.\n")
-            return
-        print("\nNo recorded ejected drives found in state. Remounting all connected external drives...")
-        ext_drives = engine.get_external_drives()
-        for d in ext_drives:
-            res = engine.adapter.mount_drive(d.id)
-            icon = "✓" if res.success else "✗"
-            print(f" {icon} {d.id}: {res.message}")
-        print()
+        print("\nNo recorded sleeping drives/volumes found in state. Skipping remount.\n")
         return
 
     item_count = len(drive_ids) + len(volume_ids)
@@ -246,14 +260,12 @@ def cmd_eject_now(engine: SafeEjectEngine, args):
     targets = getattr(args, "targets", None)
     if targets:
         print(f"\n[Eject Now] Ejecting/unmounting {len(targets)} selected target(s): {', '.join(targets)}")
-        success_count = 0
-        for t in targets:
-            res = engine.eject_single(t)
+        results = engine.eject_targets(targets)
+        success_count = sum(1 for r in results if r.success)
+        for res in results:
             icon = "✓" if res.success else "✗"
-            print(f" {icon} {t}: {res.message}")
-            if res.success:
-                success_count += 1
-        print(f"\nCompleted: {success_count}/{len(targets)} targets safely processed.\n")
+            print(f" {icon} {res.target}: {res.message}")
+        print(f"\nCompleted: {success_count}/{len(results)} targets safely processed.\n")
         return
 
     managed = engine.get_managed_drives()
@@ -348,7 +360,17 @@ def cmd_sleep_system(engine: SafeEjectEngine, args):
 def cmd_idle_sleep(engine: SafeEjectEngine, args):
     """Trigger idle sleep on selected SSDs or all external drives."""
     print("\nTriggering idle sleep for drives...")
-    engine._on_idle_sleep([])
+    results = engine._on_idle_sleep([])
+    if results:
+        for r in results:
+            icon = "✓" if r.success else "✗"
+            print(f" {icon} {r.target}: {r.message}")
+        all_success = all(r.success for r in results)
+        if not all_success:
+            import sys
+            failed_msgs = [r.message for r in results if not r.success]
+            print("\n".join(failed_msgs), file=sys.stderr)
+            sys.exit(1)
 
 
 def cmd_open(engine: SafeEjectEngine, args):
@@ -467,7 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eject.add_argument("targets", nargs="+", help="Disk identifier(s) (e.g. disk8s1) or volume name/mountpoint")
 
     # deep-sleep <targets>
-    p_deep_sleep = subparsers.add_parser("deep-sleep", help="Put physical parent drive(s) into Deep Sleep (LED OFF)")
+    p_deep_sleep = subparsers.add_parser("deep-sleep", help="Put physical parent drive(s) into Deep Sleep (Hardware Silence)")
     p_deep_sleep.add_argument("targets", nargs="*", help="Parent disk identifier(s) (e.g. disk7)")
 
     # remount-all

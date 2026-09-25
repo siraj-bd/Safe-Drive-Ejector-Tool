@@ -6,19 +6,117 @@ desktop notifications, and system sleep/wake interception via IOKit.
 
 import ctypes
 import ctypes.util
+import json
 import logging
 import os
 import plistlib
 import re
 import subprocess
-import threading
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from core.config import StateManager, get_config_dir
 from core.models import DriveInfo, EjectResult, ProcessLockInfo, RemountResult, VolumeInfo
 from platform_adapters.base import PlatformAdapter
 
 logger = logging.getLogger("SafeEject.MacOS")
+
+
+def _get_hardware_cache_file() -> Path:
+    return get_config_dir() / "hardware_cache.json"
+
+
+def _load_hardware_cache() -> Dict[str, dict]:
+    p = _get_hardware_cache_file()
+    if not p.exists():
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_hardware_cache(cache: Dict[str, dict]) -> None:
+    p = _get_hardware_cache_file()
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception:
+        pass
+
+
+def _drive_info_from_dict(d: dict, force_unmounted: bool = False) -> DriveInfo:
+    vols = []
+    for v in d.get("volumes", []):
+        vols.append(
+            VolumeInfo(
+                device_id=v.get("device_id", ""),
+                name=v.get("name", ""),
+                mount_point="" if force_unmounted else v.get("mount_point"),
+                size_bytes=v.get("size_bytes", 0),
+                fs_type=v.get("fs_type", ""),
+                type_desc=v.get("type_desc", ""),
+                uuid=v.get("uuid", ""),
+                is_mounted=False if force_unmounted else bool(v.get("is_mounted")),
+            )
+        )
+    return DriveInfo(
+        id=d.get("id", ""),
+        name=d.get("name", ""),
+        size_bytes=d.get("size_bytes", 0),
+        bus_protocol=d.get("bus_protocol", "Unknown"),
+        is_external=d.get("is_external", True),
+        is_removable=d.get("is_removable", True),
+        is_virtual=d.get("is_virtual", False),
+        media_type=d.get("media_type", "Solid state"),
+        child_count=d.get("child_count", len(vols)),
+        volumes=vols,
+    )
+
+
+def _cache_drive_info(drive: DriveInfo) -> None:
+    cache = _load_hardware_cache()
+    vols_data = []
+    for v in drive.volumes:
+        vols_data.append({
+            "device_id": v.device_id,
+            "name": v.name,
+            "mount_point": v.mount_point,
+            "size_bytes": v.size_bytes,
+            "fs_type": v.fs_type,
+            "type_desc": v.type_desc,
+            "uuid": v.uuid,
+            "is_mounted": v.is_mounted,
+        })
+    # Prune old cache entries that share the same primary_uuid or name under an obsolete disk node
+    target_uuid = drive.primary_uuid
+    target_name = drive.name
+    keys_to_remove = []
+    for k, v in cache.items():
+        if k != drive.id:
+            k_uuid = v.get("primary_uuid")
+            k_name = v.get("name")
+            if (target_uuid and k_uuid == target_uuid) or (target_name and k_name == target_name):
+                keys_to_remove.append(k)
+    for k in keys_to_remove:
+        del cache[k]
+
+    cache[drive.id] = {
+        "id": drive.id,
+        "name": drive.name,
+        "size_bytes": drive.size_bytes,
+        "bus_protocol": drive.bus_protocol,
+        "is_external": drive.is_external,
+        "is_removable": drive.is_removable,
+        "is_virtual": drive.is_virtual,
+        "media_type": drive.media_type,
+        "child_count": drive.child_count,
+        "primary_uuid": drive.primary_uuid,
+        "volumes": vols_data,
+    }
+    _save_hardware_cache(cache)
 
 
 class MacOSAdapter(PlatformAdapter):
@@ -29,30 +127,120 @@ class MacOSAdapter(PlatformAdapter):
         self._stop_requested = False
         self._info_cache: Dict[str, dict] = {}
 
+    def cache_drive_info(self, drive: DriveInfo) -> None:
+        """Expose hardware metadata caching for volume manager and adapters."""
+        _cache_drive_info(drive)
+
+    def resolve_parent_for_target(self, target_id: str) -> str:
+        """Resolve physical parent whole disk for a volume target using hardware metadata and APFS store relationships."""
+        clean_target = target_id.replace("/dev/", "").strip().lower()
+
+        # 1. Search persistent hardware cache
+        hw_cache = _load_hardware_cache()
+        for drive_id, d_data in hw_cache.items():
+            if drive_id.lower() == clean_target:
+                return drive_id
+            for vol in d_data.get("volumes", []):
+                v_dev = vol.get("device_id", "").replace("/dev/", "").lower()
+                v_uuid = (vol.get("uuid") or "").lower()
+                if v_dev == clean_target or v_uuid == clean_target:
+                    return drive_id
+
+        # 2. Fallback to physical partition pattern (e.g. disk8s1 -> disk8 -> disk7 store if known)
+        match = re.match(r"^(disk\d+)", clean_target)
+        if match:
+            return match.group(1)
+
+        return clean_target
+
     def get_drives(self) -> List[DriveInfo]:
-        """Enumerate all drives using macOS diskutil plist."""
+        """Enumerate all drives using macOS diskutil plist with hardware silence gate."""
+        sleeping_parent_ids = StateManager.get_sleeping_parent_ids()
+        hw_cache = _load_hardware_cache()
+
+        # Deduplicate cached external IDs by primary_uuid/name so stale nodes don't break silence gate
+        seen_identifiers = set()
+        active_cached_ids = []
+        for d_id, d_data in sorted(hw_cache.items(), reverse=True):
+            if d_data.get("is_external", False) and not d_data.get("is_virtual", False):
+                ident = d_data.get("primary_uuid") or d_data.get("name") or d_id
+                if ident not in seen_identifiers:
+                    seen_identifiers.add(ident)
+                    active_cached_ids.append(d_id)
+
+        all_external_sleeping = (
+            bool(active_cached_ids) and
+            all(d_id in sleeping_parent_ids for d_id in active_cached_ids)
+        )
+
+        if all_external_sleeping:
+            # ZERO bus scan: DO NOT execute diskutil list when all external parent drives are sleeping
+            logger.debug("All external drives in deep sleep; suppressing diskutil list bus scan.")
+            return [
+                _drive_info_from_dict(hw_cache[d_id], force_unmounted=True)
+                for d_id in active_cached_ids
+                if d_id in hw_cache
+            ]
+
+        # Mixed state or active drives present: perform diskutil list to discover active drives
         try:
             cmd = ["diskutil", "list", "-plist"]
-            proc = subprocess.run(cmd, capture_output=True, check=True)
+            proc = subprocess.run(cmd, capture_output=True, check=True, timeout=3)
             plist_data = plistlib.loads(proc.stdout)
         except Exception as e:
             logger.error(f"Failed to execute diskutil list: {e}")
+            if sleeping_parent_ids:
+                return [
+                    _drive_info_from_dict(hw_cache[d_id], force_unmounted=True)
+                    for d_id in sleeping_parent_ids
+                    if d_id in hw_cache
+                ]
             return []
 
         whole_disks = plist_data.get("WholeDisks", [])
         all_partitions = plist_data.get("AllDisksAndPartitions", [])
 
+        # Build set of synthesized APFS containers that have physical stores
+        synthesized_containers = set()
+        for item in all_partitions:
+            if item.get("APFSPhysicalStores"):
+                c_id = item.get("DeviceIdentifier")
+                if c_id:
+                    synthesized_containers.add(c_id.replace("/dev/", "").strip())
+
         # Build map of disk identifier -> partition/volume info from diskutil list
         volume_map = self._parse_all_partitions(all_partitions)
 
         drives: List[DriveInfo] = []
+        discovered_ids = set()
+
         for disk_id in whole_disks:
+            clean_id = disk_id.replace("/dev/", "").strip()
+            discovered_ids.add(clean_id)
+
+            if clean_id in sleeping_parent_ids:
+                # Sleeping parent: ZERO hardware inquiry (NO diskutil info)!
+                if clean_id in hw_cache:
+                    drives.append(_drive_info_from_dict(hw_cache[clean_id], force_unmounted=True))
+                continue
+
+            # Skip synthesized APFS containers whose volumes have been absorbed by their physical parent
+            if clean_id in synthesized_containers and not volume_map.get(disk_id, []):
+                continue
+
             drive_info = self._get_drive_details(disk_id, volume_map.get(disk_id, []))
             if drive_info:
                 # Omit empty virtual synthesized APFS containers whose volumes are on physical parents
                 if drive_info.is_virtual and not drive_info.volumes:
                     continue
+                if drive_info.is_external:
+                    _cache_drive_info(drive_info)
                 drives.append(drive_info)
+
+        # If a sleeping parent was ejected and detached from WholeDisks, inject from cache
+        for s_id in sleeping_parent_ids:
+            if s_id not in discovered_ids and s_id in hw_cache:
+                drives.append(_drive_info_from_dict(hw_cache[s_id], force_unmounted=True))
 
         return drives
 
@@ -139,10 +327,17 @@ class MacOSAdapter(PlatformAdapter):
 
     def _get_drive_details(self, disk_id: str, volumes: List[VolumeInfo]) -> Optional[DriveInfo]:
         """Fetch detailed hardware info for a whole disk using diskutil info -plist (cached to prevent waking sleeping drives)."""
+        clean_id = disk_id.replace("/dev/", "").strip()
+        if StateManager.is_parent_sleeping(clean_id):
+            hw_cache = _load_hardware_cache()
+            if clean_id in hw_cache:
+                return _drive_info_from_dict(hw_cache[clean_id], force_unmounted=True)
+            return None
+
         info = self._info_cache.get(disk_id)
         if not info:
             try:
-                proc = subprocess.run(["diskutil", "info", "-plist", disk_id], capture_output=True, check=True)
+                proc = subprocess.run(["diskutil", "info", "-plist", disk_id], capture_output=True, check=True, timeout=3)
                 info = plistlib.loads(proc.stdout)
                 self._info_cache[disk_id] = info
             except Exception as e:
@@ -231,59 +426,79 @@ class MacOSAdapter(PlatformAdapter):
                     blocking_procs.extend(locks)
 
         # Run diskutil eject
-        proc = subprocess.run(["diskutil", "eject", drive_id], capture_output=True, text=True)
-        if proc.returncode == 0:
-            self._info_cache.pop(drive_id, None)
-            return EjectResult(
-                target=drive_id,
-                success=True,
-                message=f"Drive {drive_id} ejected successfully.",
-            )
-        else:
-            err_msg = proc.stderr.strip() or proc.stdout.strip()
-            # If standard eject failed and there are blocking processes, report them
+        try:
+            proc = subprocess.run(["diskutil", "eject", drive_id], capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0:
+                return EjectResult(
+                    target=drive_id,
+                    success=True,
+                    message=f"Drive {drive_id} ejected successfully.",
+                )
+            else:
+                err_msg = proc.stderr.strip() or proc.stdout.strip()
+                return EjectResult(
+                    target=drive_id,
+                    success=False,
+                    message=f"Failed to eject {drive_id}: {err_msg}",
+                    blocking_processes=blocking_procs,
+                )
+        except subprocess.TimeoutExpired:
             return EjectResult(
                 target=drive_id,
                 success=False,
-                message=f"Failed to eject {drive_id}: {err_msg}",
+                message=f"Eject timed out for {drive_id} (I/O busy)",
                 blocking_processes=blocking_procs,
             )
 
     def unmount_volume(self, volume_id: str) -> EjectResult:
-        """Unmount a specific volume using diskutil unmount."""
+        """Unmount a specific volume using diskutil unmount with timeout."""
         logger.info(f"Attempting to unmount volume: {volume_id}")
-        proc = subprocess.run(["diskutil", "unmount", volume_id], capture_output=True, text=True)
-        if proc.returncode == 0:
-            return EjectResult(
-                target=volume_id,
-                success=True,
-                message=f"Volume {volume_id} unmounted successfully.",
-            )
-        else:
-            err_msg = proc.stderr.strip() or proc.stdout.strip()
+        try:
+            proc = subprocess.run(["diskutil", "unmount", volume_id], capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0:
+                return EjectResult(
+                    target=volume_id,
+                    success=True,
+                    message=f"Volume {volume_id} unmounted successfully.",
+                )
+            else:
+                err_msg = proc.stderr.strip() or proc.stdout.strip()
+                return EjectResult(
+                    target=volume_id,
+                    success=False,
+                    message=f"Failed to unmount {volume_id}: {err_msg}",
+                )
+        except subprocess.TimeoutExpired:
             return EjectResult(
                 target=volume_id,
                 success=False,
-                message=f"Failed to unmount {volume_id}: {err_msg}",
+                message=f"Unmount timed out for {volume_id}",
             )
 
     def unmount_disk(self, disk_id: str) -> EjectResult:
-        """Unmount an entire disk or container using diskutil unmountDisk."""
+        """Unmount an entire disk or container using diskutil unmountDisk with timeout."""
         clean_id = disk_id.replace("/dev/", "").strip()
         logger.info(f"Attempting to unmountDisk: {clean_id}")
-        proc = subprocess.run(["diskutil", "unmountDisk", clean_id], capture_output=True, text=True)
-        if proc.returncode == 0:
-            return EjectResult(
-                target=clean_id,
-                success=True,
-                message=f"Disk {clean_id} unmounted successfully.",
-            )
-        else:
-            err_msg = proc.stderr.strip() or proc.stdout.strip()
+        try:
+            proc = subprocess.run(["diskutil", "unmountDisk", clean_id], capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0:
+                return EjectResult(
+                    target=clean_id,
+                    success=True,
+                    message=f"Disk {clean_id} unmounted successfully.",
+                )
+            else:
+                err_msg = proc.stderr.strip() or proc.stdout.strip()
+                return EjectResult(
+                    target=clean_id,
+                    success=False,
+                    message=f"Failed to unmountDisk {clean_id}: {err_msg}",
+                )
+        except subprocess.TimeoutExpired:
             return EjectResult(
                 target=clean_id,
                 success=False,
-                message=f"Failed to unmountDisk {clean_id}: {err_msg}",
+                message=f"UnmountDisk timed out for {clean_id}",
             )
 
     def get_apfs_containers_for_disk(self, disk_id: str) -> List[str]:
@@ -292,7 +507,7 @@ class MacOSAdapter(PlatformAdapter):
         containers: List[str] = []
         try:
             cmd = ["diskutil", "list", "-plist"]
-            proc = subprocess.run(cmd, capture_output=True, check=True)
+            proc = subprocess.run(cmd, capture_output=True, check=True, timeout=3)
             data = plistlib.loads(proc.stdout)
             for item in data.get("AllDisksAndPartitions", []):
                 c_id = item.get("DeviceIdentifier")
@@ -305,53 +520,110 @@ class MacOSAdapter(PlatformAdapter):
             logger.debug(f"Failed to query APFS containers for {disk_id}: {e}")
         return containers
 
+    def teardown_snapshots_for_drive(self, target_drive) -> Optional[EjectResult]:
+        """
+        Detect and cleanly unmount any active Time Machine or APFS snapshot mounts
+        associated with the target drive's volumes (e.g. com.apple.TimeMachine...backup@/dev/disk9s1).
+        If any snapshot is busy or fails to unmount, return EjectResult(success=False).
+        """
+        try:
+            proc = subprocess.run(["mount"], capture_output=True, text=True, check=False, timeout=3)
+            mount_output = proc.stdout
+        except Exception as e:
+            logger.debug(f"Could not check mount output for snapshots: {e}")
+            return None
+
+        vol_identifiers = set()
+        for v in getattr(target_drive, "volumes", []):
+            clean_vid = v.device_id.replace("/dev/", "").strip().lower()
+            vol_identifiers.add(clean_vid)
+
+        for line in mount_output.splitlines():
+            # Match pattern: <snapshot_source>@/dev/<diskXsY> on <mountpoint> (apfs, ...)
+            match = re.search(r"(\S+@/dev/(\S+))\s+on\s+(/\S+)\s+\(", line)
+            if match:
+                snap_dev = match.group(2).lower()
+                mount_path = match.group(3)
+                if snap_dev in vol_identifiers or any(vid in snap_dev for vid in vol_identifiers):
+                    logger.info(f"Detected mounted APFS snapshot dependency: {mount_path} on {snap_dev}")
+                    try:
+                        # Use force unmount for read-only snapshot mounts to prevent hanging backupd locks
+                        unmount_res = subprocess.run(["diskutil", "unmount", "force", mount_path], capture_output=True, text=True, timeout=10)
+                        if unmount_res.returncode != 0:
+                            err = unmount_res.stderr.strip() or unmount_res.stdout.strip()
+                            logger.error(f"Failed to unmount snapshot {mount_path}: {err}")
+                            return EjectResult(
+                                target=target_drive.id,
+                                success=False,
+                                message=f"Deep Sleep aborted: Snapshot {mount_path} in use ({err})",
+                            )
+                    except subprocess.TimeoutExpired:
+                        return EjectResult(
+                            target=target_drive.id,
+                            success=False,
+                            message=f"Deep Sleep aborted: Snapshot {mount_path} unmount timed out",
+                        )
+        return None
+
     def mount_drive(self, drive_id: str) -> RemountResult:
-        """Mount all volumes on a drive using diskutil mountDisk."""
+        """Mount all volumes on a drive using diskutil mountDisk with timeout."""
         logger.info(f"Attempting to mount drive: {drive_id}")
-        proc = subprocess.run(["diskutil", "mountDisk", drive_id], capture_output=True, text=True)
-        output = proc.stdout.strip() + " " + proc.stderr.strip()
-        if proc.returncode == 0:
-            return RemountResult(
-                target=drive_id,
-                success=True,
-                message=f"Drive {drive_id} mounted successfully.",
-            )
-        else:
+        try:
+            proc = subprocess.run(["diskutil", "mountDisk", drive_id], capture_output=True, text=True, timeout=15)
+            output = proc.stdout.strip() + " " + proc.stderr.strip()
+            if proc.returncode == 0:
+                return RemountResult(
+                    target=drive_id,
+                    success=True,
+                    message=f"Drive {drive_id} mounted successfully.",
+                )
+            else:
+                return RemountResult(
+                    target=drive_id,
+                    success=False,
+                    message=f"Failed to mount {drive_id}: {output.strip()}",
+                )
+        except subprocess.TimeoutExpired:
             return RemountResult(
                 target=drive_id,
                 success=False,
-                message=f"Failed to mount {drive_id}: {output.strip()}",
+                message=f"Mount timed out for {drive_id}",
             )
 
     def mount_volume(self, volume_id: str) -> RemountResult:
-        """Mount a specific volume using diskutil mount."""
+        """Mount a specific volume using diskutil mount with timeout."""
         logger.info(f"Attempting to mount volume: {volume_id}")
-        proc = subprocess.run(["diskutil", "mount", volume_id], capture_output=True, text=True)
-        output = proc.stdout.strip()
-        if proc.returncode == 0:
-            return RemountResult(
-                target=volume_id,
-                success=True,
-                message=f"Volume {volume_id} mounted successfully.",
-            )
-        else:
+        try:
+            proc = subprocess.run(["diskutil", "mount", volume_id], capture_output=True, text=True, timeout=15)
+            output = proc.stdout.strip()
+            if proc.returncode == 0:
+                return RemountResult(
+                    target=volume_id,
+                    success=True,
+                    message=f"Volume {volume_id} mounted successfully.",
+                )
+            else:
+                return RemountResult(
+                    target=volume_id,
+                    success=False,
+                    message=f"Failed to mount {volume_id}: {proc.stderr.strip() or output}",
+                )
+        except subprocess.TimeoutExpired:
             return RemountResult(
                 target=volume_id,
                 success=False,
-                message=f"Failed to mount {volume_id}: {proc.stderr.strip() or output}",
+                message=f"Mount timed out for {volume_id}",
             )
 
     def get_blocking_processes(self, mount_point: str) -> List[ProcessLockInfo]:
-        """Find processes locking files on the mount point via lsof."""
+        """Find processes locking files on the mount point via lsof with timeout."""
         if not mount_point or not os.path.exists(mount_point):
             return []
 
         locks: List[ProcessLockInfo] = []
         try:
-            # lsof -F pcn +D <mount_point> gives machine readable output:
-            # p<pid>, c<command>, n<filename>
             cmd = ["lsof", "-F", "pcn", "+D", mount_point]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
             lines = proc.stdout.splitlines()
 
             current_pid = 0
@@ -486,8 +758,7 @@ class MacOSAdapter(PlatformAdapter):
         )
 
         if not res_root_port:
-            logger.error("IORegisterForSystemPower returned 0. Falling back to log stream watcher.")
-            self._fallback_power_listener(on_sleep, on_wake)
+            logger.error("IORegisterForSystemPower returned 0. Native power listener unavailable.")
             return
 
         root_port = io_connect_t(res_root_port)
@@ -504,19 +775,5 @@ class MacOSAdapter(PlatformAdapter):
         cf.CFRunLoopRun()
 
     def _fallback_power_listener(self, on_sleep: Callable[[], None], on_wake: Callable[[], None]) -> None:
-        """Fallback watcher that checks sleep/wake events if IOKit ctypes cannot be initialized."""
-        logger.info("Running fallback power monitor via system log stream...")
-        try:
-            cmd = ["log", "stream", "--style", "ndjson", "--predicate", 'eventMessage contains "Sleep" or eventMessage contains "Wake"']
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            for line in proc.stdout:
-                if self._stop_requested:
-                    break
-                if "Entering Sleep" in line or "System is going to sleep" in line:
-                    logger.info("Fallback detected sleep event.")
-                    on_sleep()
-                elif "Wake from" in line or "System has awakened" in line:
-                    logger.info("Fallback detected wake event.")
-                    on_wake()
-        except Exception as e:
-            logger.error(f"Fallback power watcher failed: {e}")
+        """Fallback power watcher (stubbed to prevent high CPU from system log streaming)."""
+        logger.warning("Fallback power monitoring via log stream is disabled to prevent system freezes.")

@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from core.config import SafeEjectConfig, StateManager
+from core.config import StateManager
 from core.engine import SafeEjectEngine
 
 
@@ -43,15 +43,29 @@ def handle_json_status():
                 ejected_count += 1
 
     state = StateManager.load_ejected_drives()
-    # Clean up any state entries for drives/volumes that are currently mounted
+    # Clean up state entries ONLY for drives/volumes that are actually currently mounted
     active_ejected_vols = [vid for vid in state.get("volume_identifiers", []) if vid not in currently_mounted_ids]
-    if len(active_ejected_vols) != len(state.get("volume_identifiers", [])):
-        if not active_ejected_vols:
+    active_ejected_drives = [did for did in state.get("drive_ids", []) if did not in currently_mounted_ids]
+    if (len(active_ejected_vols) != len(state.get("volume_identifiers", [])) or
+        len(active_ejected_drives) != len(state.get("drive_ids", []))):
+        if not active_ejected_vols and not active_ejected_drives:
             StateManager.clear_ejected_drives()
-            state = {"drive_ids": [], "volume_identifiers": []}
+            state = {
+                "drive_ids": [],
+                "volume_identifiers": [],
+                "explicit_sleep_parent_ids": [],
+                "idle_sleep_parent_ids": [],
+            }
         else:
             state["volume_identifiers"] = active_ejected_vols
-            StateManager.save_ejected_drives(state.get("drive_ids", []), active_ejected_vols, append=False)
+            state["drive_ids"] = active_ejected_drives
+            state["explicit_sleep_parent_ids"] = [p for p in state.get("explicit_sleep_parent_ids", []) if p in active_ejected_drives]
+            state["idle_sleep_parent_ids"] = [p for p in state.get("idle_sleep_parent_ids", []) if p in active_ejected_drives]
+            try:
+                with open(StateManager.get_state_file(), "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=4)
+            except Exception:
+                pass
 
     data = {
         "platform": sys.platform,

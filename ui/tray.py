@@ -4,13 +4,10 @@ Uses pystray when available, with background daemon thread.
 """
 
 import logging
-import os
 import sys
 import threading
-import time
 from typing import Optional
 
-from core.config import SafeEjectConfig
 from core.engine import SafeEjectEngine
 
 logger = logging.getLogger("SafeEject.Tray")

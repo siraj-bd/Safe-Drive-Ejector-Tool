@@ -99,6 +99,7 @@ class SafeEjectConfig:
 
     # Custom Functional Features (Individual SSD Selection & Mac Touch Wake)
     sleep_timer_seconds: int = 120       # Default: 2 minutes
+    deep_sleep_mode: bool = True         # True = Hardware Deep Sleep (LED off, manual mount only); False = Normal Sleep (touch wakeable)
     managed_drive_uuids: List[str] = field(default_factory=list) # Up to 6 managed drives
     selected_sleep_drive_uuids: List[str] = field(default_factory=list) # Individually selected SSDs to sleep
     wake_mode: str = "touch"             # "touch" = auto active on Mac touch; "manual" = stay asleep until manual mount
@@ -147,8 +148,11 @@ class SafeEjectConfig:
         if not self.selected_sleep_drive_uuids:
             # If none explicitly selected, select all managed drives
             return self.is_drive_managed(uuid, drive_id)
+        clean_uuid = (uuid or "").strip().lower()
+        clean_drive_id = (drive_id or "").replace("/dev/", "").strip().lower()
         for s in self.selected_sleep_drive_uuids:
-            if s.lower() == uuid.lower() or (drive_id and s.lower() == drive_id.lower()):
+            s_clean = s.replace("/dev/", "").strip().lower()
+            if (clean_uuid and s_clean == clean_uuid) or (clean_drive_id and s_clean == clean_drive_id):
                 return True
         return False
 
@@ -230,6 +234,20 @@ class SafeEjectConfig:
         self.save()
 
     @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SafeEjectConfig":
+        """Construct SafeEjectConfig from a dictionary with aliases mapped."""
+        d = dict(data)
+        if "eject_on_sleep" not in d and "eject_before_sleep" in d:
+            d["eject_on_sleep"] = d["eject_before_sleep"]
+        if "remount_on_wake" not in d and "auto_awake" in d:
+            d["remount_on_wake"] = d["auto_awake"]
+        if "show_notifications" not in d and "notify_after_eject_remount" in d:
+            d["show_notifications"] = d["notify_after_eject_remount"]
+        if "deep_sleep_mode" not in d and "remount_on_wake" in d:
+            d["deep_sleep_mode"] = not d["remount_on_wake"]
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+    @classmethod
     def load(cls) -> "SafeEjectConfig":
         config_path = get_config_dir() / "config.json"
         if not config_path.exists():
@@ -240,15 +258,7 @@ class SafeEjectConfig:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # Map legacy/alias keys if primary is absent
-            if "eject_on_sleep" not in data and "eject_before_sleep" in data:
-                data["eject_on_sleep"] = data["eject_before_sleep"]
-            if "remount_on_wake" not in data and "auto_awake" in data:
-                data["remount_on_wake"] = data["auto_awake"]
-            if "show_notifications" not in data and "notify_after_eject_remount" in data:
-                data["show_notifications"] = data["notify_after_eject_remount"]
-
-            return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            return cls.from_dict(data)
         except Exception:
             return cls()
 
@@ -277,21 +287,54 @@ class StateManager:
 
     @classmethod
     def save_ejected_drives(
-        cls, drive_ids: List[str], volume_identifiers: List[str], append: bool = True
+        cls,
+        drive_ids: List[str],
+        volume_identifiers: List[str],
+        append: bool = True,
+        is_explicit_deep_sleep: bool = False,
     ) -> None:
+        """
+        Saves ejected/sleeping drives and volumes with strict separation between
+        Explicit Deep Sleep (manual/UI) and Idle Sleep (timer/touch-wake).
+        A drive can NEVER be in both explicit and idle sleep sets simultaneously.
+        """
         try:
+            clean_drives = [d.strip().replace("/dev/", "") for d in drive_ids if d.strip()]
+            clean_vols = [v.strip().replace("/dev/", "") for v in volume_identifiers if v.strip()]
+
             if append:
                 existing = cls.load_ejected_drives()
-                combined_drives = list(dict.fromkeys(existing.get("drive_ids", []) + drive_ids))
-                combined_vols = list(dict.fromkeys(existing.get("volume_identifiers", []) + volume_identifiers))
+                combined_drives = list(dict.fromkeys(existing.get("drive_ids", []) + clean_drives))
+                combined_vols = list(dict.fromkeys(existing.get("volume_identifiers", []) + clean_vols))
+                existing_explicit = existing.get("explicit_sleep_parent_ids", [])
+                existing_idle = existing.get("idle_sleep_parent_ids", [])
+
+                if is_explicit_deep_sleep:
+                    # Enforce disjoint: add to explicit, purge completely from idle!
+                    explicit_parents = list(dict.fromkeys(existing_explicit + clean_drives))
+                    idle_parents = [p for p in existing_idle if p not in explicit_parents]
+                else:
+                    # Idle sleep: only add if not already in explicit deep sleep!
+                    explicit_parents = existing_explicit
+                    idle_parents = list(dict.fromkeys([
+                        p for p in (existing_idle + clean_drives) if p not in explicit_parents
+                    ]))
             else:
-                combined_drives = list(dict.fromkeys(drive_ids))
-                combined_vols = list(dict.fromkeys(volume_identifiers))
+                combined_drives = list(dict.fromkeys(clean_drives))
+                combined_vols = list(dict.fromkeys(clean_vols))
+                if is_explicit_deep_sleep:
+                    explicit_parents = list(dict.fromkeys(clean_drives))
+                    idle_parents = []
+                else:
+                    explicit_parents = []
+                    idle_parents = list(dict.fromkeys(clean_drives))
 
             state_path = cls.get_state_file()
             data = {
                 "drive_ids": combined_drives,
                 "volume_identifiers": combined_vols,
+                "explicit_sleep_parent_ids": explicit_parents,
+                "idle_sleep_parent_ids": idle_parents,
             }
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
@@ -299,19 +342,35 @@ class StateManager:
             pass
 
     @classmethod
-    def load_ejected_drives(cls) -> Dict[str, List[str]]:
+    def load_ejected_drives(cls) -> Dict[str, Any]:
         state_path = cls.get_state_file()
         if not state_path.exists():
-            return {"drive_ids": [], "volume_identifiers": []}
+            return {
+                "drive_ids": [],
+                "volume_identifiers": [],
+                "explicit_sleep_parent_ids": [],
+                "idle_sleep_parent_ids": [],
+            }
         try:
             with open(state_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                drive_ids = [d.strip().replace("/dev/", "") for d in data.get("drive_ids", []) if d.strip()]
+                vol_ids = [v.strip().replace("/dev/", "") for v in data.get("volume_identifiers", []) if v.strip()]
+                explicit_parents = [p.strip().replace("/dev/", "") for p in data.get("explicit_sleep_parent_ids", []) if p.strip()]
+                idle_parents = [p.strip().replace("/dev/", "") for p in data.get("idle_sleep_parent_ids", []) if p.strip() and p not in explicit_parents]
                 return {
-                    "drive_ids": data.get("drive_ids", []),
-                    "volume_identifiers": data.get("volume_identifiers", []),
+                    "drive_ids": drive_ids,
+                    "volume_identifiers": vol_ids,
+                    "explicit_sleep_parent_ids": explicit_parents,
+                    "idle_sleep_parent_ids": idle_parents,
                 }
         except Exception:
-            return {"drive_ids": [], "volume_identifiers": []}
+            return {
+                "drive_ids": [],
+                "volume_identifiers": [],
+                "explicit_sleep_parent_ids": [],
+                "idle_sleep_parent_ids": [],
+            }
 
     @classmethod
     def clear_ejected_drives(cls) -> None:
@@ -323,16 +382,79 @@ class StateManager:
                 pass
 
     @classmethod
-    def remove_ejected_target(cls, target: str) -> None:
-        """Remove a remounted volume or drive from ejected_state.json."""
+    def get_sleeping_parent_ids(cls) -> List[str]:
+        """Return normalized list of parent drive identifiers currently recorded as sleeping."""
+        state = cls.load_ejected_drives()
+        return [d.strip().replace("/dev/", "") for d in state.get("drive_ids", []) if d.strip()]
+
+    @classmethod
+    def get_explicit_sleep_parent_ids(cls) -> List[str]:
+        """Return parent drives put into explicit Deep Sleep (manual/UI)."""
+        state = cls.load_ejected_drives()
+        return [d.strip().replace("/dev/", "") for d in state.get("explicit_sleep_parent_ids", []) if d.strip()]
+
+    @classmethod
+    def get_idle_sleep_parent_ids(cls) -> List[str]:
+        """Return parent drives put into sleep purely via idle timer (eligible for touch wake)."""
+        state = cls.load_ejected_drives()
+        return [d.strip().replace("/dev/", "") for d in state.get("idle_sleep_parent_ids", []) if d.strip()]
+
+    @classmethod
+    def get_auto_wakeable_parent_ids(cls) -> List[str]:
+        """Return only parent drives that can be auto-awakened (idle sleep only, never explicit deep sleep)."""
+        explicit = set(p.lower() for p in cls.get_explicit_sleep_parent_ids())
+        return [p for p in cls.get_idle_sleep_parent_ids() if p.lower() not in explicit]
+
+    @classmethod
+    def is_parent_sleeping(cls, target: str) -> bool:
+        """Check whether a drive or its parent is registered as sleeping."""
+        clean = target.strip().replace("/dev/", "").lower()
+        sleeping = [p.lower() for p in cls.get_sleeping_parent_ids()]
+        return clean in sleeping
+
+    @classmethod
+    def is_explicit_deep_sleeping(cls, target: str) -> bool:
+        """Check whether a target parent drive is in explicit Deep Sleep (immune to auto-wake)."""
+        clean = target.strip().replace("/dev/", "").lower()
+        explicit = [p.lower() for p in cls.get_explicit_sleep_parent_ids()]
+        return clean in explicit
+
+    @classmethod
+    def remove_ejected_target(cls, target: str, parent_id: str = "") -> None:
+        """Remove a remounted volume or drive (and its parent if specified) from ejected_state.json across all categories."""
         try:
             state = cls.load_ejected_drives()
             clean_t = target.strip().replace("/dev/", "").lower()
-            drives = [d for d in state.get("drive_ids", []) if d.replace("/dev/", "").lower() != clean_t]
-            vols = [v for v in state.get("volume_identifiers", []) if v.replace("/dev/", "").lower() != clean_t]
+            clean_p = parent_id.strip().replace("/dev/", "").lower() if parent_id else ""
+
+            drives = [
+                d for d in state.get("drive_ids", [])
+                if d.replace("/dev/", "").lower() not in (clean_t, clean_p)
+            ]
+            vols = [
+                v for v in state.get("volume_identifiers", [])
+                if v.replace("/dev/", "").lower() != clean_t
+            ]
+            explicit_parents = [
+                p for p in state.get("explicit_sleep_parent_ids", [])
+                if p.replace("/dev/", "").lower() not in (clean_t, clean_p)
+            ]
+            idle_parents = [
+                p for p in state.get("idle_sleep_parent_ids", [])
+                if p.replace("/dev/", "").lower() not in (clean_t, clean_p)
+            ]
+
             if not drives and not vols:
                 cls.clear_ejected_drives()
             else:
-                cls.save_ejected_drives(drives, vols, append=False)
+                state_path = cls.get_state_file()
+                data = {
+                    "drive_ids": drives,
+                    "volume_identifiers": vols,
+                    "explicit_sleep_parent_ids": explicit_parents,
+                    "idle_sleep_parent_ids": idle_parents,
+                }
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
         except Exception:
             pass

@@ -27,9 +27,9 @@ fi
 
 # 3. Remove user configurations and state
 echo "[3/4] Removing configuration and cache data..."
-rm -rf "$HOME/.config/safely-disk-ejector-tool"
+rm -rf "$HOME/.config/safe-eject" "$HOME/.config/safely-disk-ejector-tool"
 rm -f /tmp/com.user.safeeject.lock /tmp/safeeject_app.log /tmp/safeeject_err.log
-echo "      Cleaned: ~/.config/safely-disk-ejector-tool"
+echo "      Cleaned: ~/.config/safe-eject"
 
 # 4. Clean local build artifacts in workspace
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

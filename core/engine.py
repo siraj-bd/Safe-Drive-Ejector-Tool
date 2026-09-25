@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 
 from core.config import SafeEjectConfig, StateManager
 from core.idle_monitor import IdleMonitor
-from core.models import DriveInfo, EjectResult, RemountResult, VolumeInfo
+from core.models import DriveInfo, EjectResult, RemountResult
 from core.volume_manager import SSDVolumeManager
 from platform_adapters import get_platform_adapter
 from platform_adapters.base import PlatformAdapter
@@ -75,31 +75,43 @@ class SafeEjectEngine:
         return results
 
     def eject_all_external(self, manual: bool = False) -> List[EjectResult]:
-        """Eject all managed external drives."""
-        return self.eject_now()
+        """Eject all managed external drives and record in state for remounting."""
+        results = self.volume_manager.eject_now()
+        success = any(r.success for r in results)
+        if success:
+            self.volume_manager.play_sound(self.config.success_sound)
+        else:
+            self.volume_manager.play_sound(self.config.failure_sound)
+        self.status_message = f"Ejected {len(results)} drive(s)"
+        return results
 
     def remount_all_ejected(self, only_if_recorded: bool = False) -> List[RemountResult]:
         """Remount drives and volumes that were previously safely ejected by SafeEject."""
         state = StateManager.load_ejected_drives()
-        drive_ids = state.get("drive_ids", [])
-        volume_ids = state.get("volume_identifiers", [])
+        drive_ids = list(state.get("drive_ids", []))
+        volume_ids = list(state.get("volume_identifiers", []))
+        explicit_parents = set(p.lower() for p in state.get("explicit_sleep_parent_ids", []))
         results: List[RemountResult] = []
 
         if not drive_ids and not volume_ids:
-            if only_if_recorded:
-                logger.info("Auto-Wake: No recorded sleeping drives/volumes found in state. Skipping unrelated drives.")
-                self.status_message = "No sleeping drives to restore"
+            logger.info("No recorded sleeping drives/volumes found in state. Skipping remount.")
+            self.status_message = "No sleeping drives to restore"
+            return []
+
+        # If only_if_recorded is True (auto-wake, touch-wake, system-wake):
+        # EXCLUDE any drive or volume belonging to an explicit deep-sleep parent!
+        if only_if_recorded:
+            auto_wake_parents = set(p.lower() for p in StateManager.get_auto_wakeable_parent_ids())
+            drive_ids = [d for d in drive_ids if d.lower() in auto_wake_parents]
+            if hasattr(self.adapter, "resolve_parent_for_target"):
+                volume_ids = [
+                    v for v in volume_ids
+                    if self.adapter.resolve_parent_for_target(v).lower() not in explicit_parents
+                ]
+            if not drive_ids and not volume_ids:
+                logger.info("Auto-Wake: All sleeping drives are in explicit Deep Sleep. Skipping auto-remount.")
+                self.status_message = "No auto-wakeable drives to restore"
                 return []
-            logger.info("No recorded ejected drives or volumes in state. Mounting managed drives...")
-            managed = self.get_managed_drives()
-            for d in managed:
-                res = self.adapter.mount_drive(d.id)
-                results.append(res)
-                self.idle_monitor.mark_drive_awake(d.id)
-            self.status_message = f"Remounted {len(results)} drive(s)"
-            if results and any(r.success for r in results):
-                self.volume_manager.play_sound(self.config.success_sound)
-            return results
 
         logger.info(f"Remounting {len(volume_ids)} volume(s) and {len(drive_ids)} drive(s)...")
         success_count = 0
@@ -124,8 +136,6 @@ class SafeEjectEngine:
                     self.idle_monitor.mark_drive_awake(drive_id)
                 else:
                     logger.warning(f"Could not remount drive {drive_id}: {res.message}")
-
-        StateManager.clear_ejected_drives()
 
         if success_count > 0:
             self.volume_manager.play_sound(self.config.success_sound)
@@ -251,14 +261,32 @@ class SafeEjectEngine:
     def toggle_sleep_selection(self, target: str) -> Tuple[bool, str]:
         """Toggle individual SSD selection for auto-sleep."""
         drives = self.get_external_drives()
+        clean_target = target.strip().replace("/dev/", "").lower()
         target_uuid = target
+        found = False
+
+        # 1. Match parent drive ID or primary UUID
         for d in drives:
-            if d.id.lower() == target.lower():
-                target_uuid = d.primary_uuid
+            d_clean = d.id.replace("/dev/", "").lower()
+            if d_clean == clean_target or (d.primary_uuid and d.primary_uuid.lower() == clean_target):
+                target_uuid = d.primary_uuid or d_clean
+                found = True
                 break
-            for v in d.volumes:
-                if v.device_id.lower() == target.lower() or v.name.lower() == target.lower():
-                    target_uuid = v.uuid or v.device_id
+
+        # 2. If not matched, match child volume
+        if not found:
+            for d in drives:
+                for v in d.volumes:
+                    v_clean = v.device_id.replace("/dev/", "").lower()
+                    if (
+                        v_clean == clean_target
+                        or (v.name and v.name.lower() == clean_target)
+                        or (v.uuid and v.uuid.lower() == clean_target)
+                    ):
+                        target_uuid = v.uuid or v_clean
+                        found = True
+                        break
+                if found:
                     break
 
         is_sel = self.config.toggle_sleep_drive_selection(target_uuid)
@@ -270,10 +298,11 @@ class SafeEjectEngine:
         return self.volume_manager.toggle_managed(target)
 
     def deep_sleep_target(self, target: str) -> EjectResult:
-        """Dedicated Deep Sleep (LED-OFF) for a physical parent drive or target."""
-        res = self.volume_manager.deep_sleep_drive(target)
+        """Dedicated Deep Sleep (Hardware Silence) for a physical parent drive or target."""
+        res = self.volume_manager.deep_sleep_drive(target, is_explicit=True)
         if res.success:
-            self.idle_monitor.mark_drive_asleep(target)
+            # Explicit Deep Sleep: Ensure target is purged from idle_monitor touch-wake set!
+            self.idle_monitor.mark_drive_awake(target)
             self.volume_manager.play_sound(self.config.success_sound)
         else:
             self.volume_manager.play_sound(self.config.failure_sound)
@@ -283,7 +312,7 @@ class SafeEjectEngine:
         """
         Eject or unmount specific targets enforcing Parent Precedence:
         - If parent physical drive (e.g. disk7) is among targets:
-          Execute Deep Sleep once for the entire SSD (eject parent, LED OFF).
+          Execute Deep Sleep once for the entire SSD (eject parent, Hardware Silence).
           Any child partitions of this parent in targets are subsumed.
         - If only child partition(s) are targeted (e.g. disk8s1):
           Unmount partition only; never eject parent disk or turn LED off.
@@ -336,32 +365,38 @@ class SafeEjectEngine:
             self.volume_manager.play_sound(self.config.failure_sound)
         return results
 
-    def _on_idle_sleep(self, _targets: List[str]):
+    def _on_idle_sleep(self, _targets: List[str] = None) -> List[EjectResult]:
         """
         Triggered when Mac is idle beyond the sleep timer (e.g. 2m/5m/10m/15m/30m/1h/2h)
         or before system sleep / logout:
-        - If parent SSD (disk7) is selected: Deep Sleep (flush -> clean unmount children -> APFS container teardown -> parent eject -> LED OFF).
+        - If parent SSD (disk7) is selected: Deep Sleep (flush -> clean unmount children -> APFS container teardown -> parent eject -> Hardware Silence).
           Does not skip if children already unmounted.
         - If only child partition selected: Unmount partition only (parent stays awake, LED stays ON).
         - If both selected: Parent precedence applies (single Deep Sleep run).
         """
         all_drives = self.get_external_drives()
         if not all_drives:
-            return
+            return []
 
         has_any_selection = any(d.is_sleep_selected or any(v.is_sleep_selected for v in d.volumes) for d in all_drives)
         has_managed = any(d.is_managed for d in all_drives)
 
         logger.info(f"Triggering Idle Sleep workflow (has_explicit_selection: {has_any_selection})...")
         sleep_count = 0
+        results: List[EjectResult] = []
 
         for d in all_drives:
             # If no explicit selection, fallback to managed drives or all drives
             should_sleep_parent = d.is_sleep_selected or (not has_any_selection and (d.is_managed if has_managed else True))
 
             if should_sleep_parent:
-                logger.info(f"Idle Sleep: Parent precedence for {d.id}. Executing Deep Sleep (LED OFF)...")
-                r = self.volume_manager.deep_sleep_drive(d.id)
+                is_explicit = bool(getattr(self.config, "deep_sleep_mode", True))
+                if is_explicit:
+                    logger.info(f"Idle Sleep (Deep Sleep Mode ON): Parent precedence for {d.id}. Executing Full Hardware Deep Sleep (LED OFF, manual mount only)...")
+                else:
+                    logger.info(f"Idle Sleep (Deep Sleep Mode OFF): Executing Normal Sleep for {d.id} (wakeable on touch)...")
+                r = self.volume_manager.deep_sleep_drive(d.id, is_explicit=is_explicit)
+                results.append(r)
                 if r.success:
                     sleep_count += 1
                     self.idle_monitor.mark_drive_asleep(d.id)
@@ -375,9 +410,10 @@ class SafeEjectEngine:
                     if v.is_sleep_selected and v.is_mounted:
                         logger.info(f"Idle Sleep: Unmounting child partition {v.device_id} ({v.name}). Parent {d.id} remains awake.")
                         res = self.adapter.unmount_volume(v.device_id)
+                        results.append(res)
                         if res.success:
                             sleep_count += 1
-                            StateManager.save_ejected_drives([], [v.device_id], append=True)
+                            StateManager.save_ejected_drives([], [v.device_id], append=True, is_explicit_deep_sleep=False)
                             self.idle_monitor.mark_drive_asleep(v.device_id)
                         else:
                             logger.warning(f"Could not unmount partition {v.device_id}: {res.message}")
@@ -389,6 +425,7 @@ class SafeEjectEngine:
                     "SafeEject - Deep Sleep",
                     f"{sleep_count} external drive item(s) safely put to sleep.",
                 )
+        return results
 
     def _on_touch_wake(self, sleeping_ids: List[str]):
         """Triggered when user touches the Mac and wake_mode == 'touch'."""
@@ -396,15 +433,30 @@ class SafeEjectEngine:
             logger.debug("Mac touched, but wake_mode is manual. Keeping SSDs asleep.")
             return
 
-        logger.info(f"User touched Mac. Auto-activating {len(sleeping_ids)} sleeping target(s)...")
-        wake_count = 0
+        # CRITICAL RULE: Explicit Deep Sleep drives are NEVER awakened by touch wake!
+        explicit_parents = set(p.lower() for p in StateManager.get_explicit_sleep_parent_ids())
+        eligible_targets = []
         for target_id in sleeping_ids:
+            parent_id = target_id
+            if hasattr(self.adapter, "resolve_parent_for_target"):
+                parent_id = self.adapter.resolve_parent_for_target(target_id)
+            if parent_id.lower() in explicit_parents:
+                logger.info(f"Touch-wake: Skipping explicit Deep Sleep target '{target_id}' (parent '{parent_id}' immune to touch wake).")
+                continue
+            eligible_targets.append(target_id)
+
+        if not eligible_targets:
+            logger.info("Touch-wake: No eligible idle-sleep targets to wake.")
+            return
+
+        logger.info(f"User touched Mac. Auto-activating {len(eligible_targets)} sleeping target(s)...")
+        wake_count = 0
+        for target_id in eligible_targets:
             res = self.volume_manager.mount_target(target_id)
             if res.success:
                 wake_count += 1
                 self.idle_monitor.mark_drive_awake(target_id)
             else:
-                # Keep marked as asleep if remount failed
                 self.idle_monitor.mark_drive_asleep(target_id)
 
         if wake_count > 0:

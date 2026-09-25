@@ -22,17 +22,16 @@
       overflow: hidden;
       display: flex;
       justify-content: center;
-      align-items: flex-start;
+      align-items: center;
       user-select: none;
     }
 
     /* ==========================================================================
-       MAIN CARD CONTAINER (fast-rabbit-51 by dzoshi)
-       Strict outer boundary: nothing inside or behind peeks outside!
+       MAIN CARD CONTAINER (Exact from Uiverse.io by dzoshi / fast-rabbit-51)
        ========================================================================== */
     .card {
       position: relative;
-      width: 192px;
+      width: 190px;
       min-height: 316px;
       background: linear-gradient(-45deg, #161616 0%, #000000 100%);
       color: #81818144;
@@ -40,12 +39,50 @@
       flex-direction: column;
       padding: 6px 6px;
       gap: 2.5px;
-      border-radius: 10px;
-      border: 1.5px solid #ff1a1a;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 26, 26, 0.25);
-      overflow: hidden; /* CRITICAL: Outer boundary clips all background and pseudo-layers */
-      box-sizing: border-box;
+      border-radius: 8px;
       cursor: pointer;
+      box-sizing: border-box;
+      margin: auto;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      left: 0;
+      right: 0;
+      margin: auto;
+      width: 100%;
+      height: calc(100% + 6px);
+      border-radius: 10px;
+      background: linear-gradient(-45deg, #ff0000 0%, #d80000 40%);
+      z-index: -10;
+      pointer-events: none;
+      transition: all 0.8s cubic-bezier(0.175, 0.95, 0.9, 1.275);
+      box-shadow: 0px 20px 30px hsla(0, 0%, 0%, 0.521);
+    }
+
+    .card::after {
+      content: "";
+      z-index: -1;
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: calc(100% - 25px);
+      height: calc(100% - 9px);
+      border-radius: 8px;
+      background: linear-gradient(-45deg, #fc0000 0%, #f00000 100%);
+      transform: translate3d(0, 0, 0) scale(0.45);
+      pointer-events: none;
+    }
+
+    .card:hover::after {
+      transition: all 0.2s cubic-bezier(0.175, 0.285, 0.82, 1.275);
+    }
+
+    .card:hover::before {
+      transform: scaleX(1.02) scaleY(1.02);
+      box-shadow: 0px 0px 30px 0px hsla(0, 100%, 50%, 0.356);
     }
 
     /* Contained water-colour / blur background layer strictly inside & behind card content */
@@ -63,56 +100,6 @@
 
     .card:hover .card-watercolor-bg {
       background: radial-gradient(circle at 50% 25%, rgba(255, 59, 48, 0.18), rgba(86, 40, 238, 0.12) 60%, rgba(18, 18, 19, 0.85) 100%);
-    }
-
-    /* ==========================================================================
-       MENUBAR SPECIFIC ADJUSTMENTS (1X, 1.25X, 1.5X)
-       Guarantees zero background/white/blur layer bleed via clip & mask
-       ========================================================================== */
-    body.menubar-scale-1 .card,
-    body.menubar-scale-1-25 .card,
-    body.menubar-scale-1-5 .card {
-      clip-path: inset(0 round 10px);
-      -webkit-clip-path: inset(0 round 10px);
-      -webkit-mask-image: -webkit-radial-gradient(white, black);
-      overflow: hidden;
-      box-sizing: border-box;
-    }
-
-    body.menubar-scale-1 .card-watercolor-bg,
-    body.menubar-scale-1-25 .card-watercolor-bg,
-    body.menubar-scale-1-5 .card-watercolor-bg {
-      inset: 4px;
-      border-radius: 6px;
-      clip-path: inset(0 round 6px);
-      -webkit-clip-path: inset(0 round 6px);
-      -webkit-mask-image: -webkit-radial-gradient(white, black);
-      pointer-events: none;
-    }
-
-    .card::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      background: linear-gradient(180deg, rgba(255,0,0,0.15) 0%, rgba(216,0,0,0.05) 50%, rgba(255,0,0,0.15) 100%);
-      z-index: 0;
-      pointer-events: none;
-      transition: all 0.4s ease;
-    }
-
-    .card::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      box-shadow: inset 0 0 8px rgba(255, 26, 26, 0.2);
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    .card:hover::before {
-      background: linear-gradient(180deg, rgba(255,0,0,0.25) 0%, rgba(216,0,0,0.1) 50%, rgba(255,0,0,0.25) 100%);
     }
 
     .github-header-btn,
@@ -1262,11 +1249,22 @@
     .footer-brand .green-accent {
       color: #22c55e;
       text-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+      transition: text-shadow 0.35s ease;
     }
 
     .footer-brand .red-accent {
       color: #ff3333;
       text-shadow: 0 0 8px rgba(255, 51, 51, 0.7);
+      transition: color 0.35s ease, text-shadow 0.35s ease;
+    }
+
+    .card:hover .footer-brand .red-accent {
+      color: #ff2222;
+      text-shadow: 0 0 12px rgba(255, 34, 34, 0.95), 0 0 20px rgba(255, 34, 34, 0.5);
+    }
+
+    .card:hover .footer-brand .green-accent {
+      text-shadow: 0 0 12px rgba(34, 197, 94, 0.95);
     }
   </style>
 </head>
@@ -1325,8 +1323,6 @@
             <option value="1.25">1.25X</option>
             <option value="1.5">1.5X</option>
             <option value="2">2X</option>
-            <option value="3">3X</option>
-            <option value="4">4X</option>
           </select>
         </div>
       </div>
@@ -1358,7 +1354,7 @@
           <div class="custom-checkbox unchecked" id="checkDriver1" onclick="toggleDriverCheckbox(1)">
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
-          <span class="driver-name-text" id="driver1Name">1st driver</span>
+          <span class="driver-name-text" id="driver1Name">1st Driver</span>
         </div>
         <div class="driver-actions-wrap">
           <button class="bookmarkBtn mount-btn" onclick="triggerMount(1)" title="Mount">
@@ -1382,7 +1378,7 @@
           <div class="custom-checkbox unchecked" id="checkDriver2" onclick="toggleDriverCheckbox(2)">
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
-          <span class="driver-name-text" id="driver2Name">2nd driver</span>
+          <span class="driver-name-text" id="driver2Name">2nd Driver</span>
         </div>
         <div class="driver-actions-wrap">
           <button class="bookmarkBtn mount-btn" onclick="triggerMount(2)" title="Mount">
@@ -1406,7 +1402,7 @@
           <div class="custom-checkbox unchecked" id="checkDriver3" onclick="toggleDriverCheckbox(3)">
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
-          <span class="driver-name-text" id="driver3Name">3rd driver</span>
+          <span class="driver-name-text" id="driver3Name">3rd Driver</span>
         </div>
         <div class="driver-actions-wrap">
           <button class="bookmarkBtn mount-btn" onclick="triggerMount(3)" title="Mount">
@@ -1430,7 +1426,7 @@
           <div class="custom-checkbox unchecked" id="checkDriver4" onclick="toggleDriverCheckbox(4)">
             <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </div>
-          <span class="driver-name-text" id="driver4Name">4th driver</span>
+          <span class="driver-name-text" id="driver4Name">4th Driver</span>
         </div>
         <div class="driver-actions-wrap">
           <button class="bookmarkBtn mount-btn" onclick="triggerMount(4)" title="Mount">
@@ -1489,7 +1485,7 @@
           </svg>
           <select class="custom-select" id="sleepTimerSelect" onchange="changeSleepTimer(this.value)">
             <option value="2m">2m</option>
-            <option value="5m" selected>5m</option>
+            <option value="5m">5m</option>
             <option value="10m">10m</option>
             <option value="15m">15m</option>
             <option value="30m">30m</option>
@@ -1500,14 +1496,14 @@
         </div>
       </div>
 
-      <div class="control-card">
+      <div class="control-card" id="deepSleepCard" title="External full hardware deep sleep with light off. Drive stays asleep until manually mounted.">
         <div class="control-card-left">
           <div class="round-icon icon-purple">
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
           </div>
-          <span class="control-title">Awake</span>
+          <span class="control-title">Deep Sleep</span>
         </div>
-        <div class="custom-checkbox unchecked" id="autoAwakeCheck" onclick="toggleCheckbox(this)" style="margin-right: 2px;">
+        <div class="custom-checkbox" id="deepSleepCheck" onclick="toggleCheckbox(this)" style="margin-right: 2px;" title="External full hardware deep sleep with light off. Drive stays asleep until manually mounted.">
           <svg class="check-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </div>
       </div>
@@ -1677,19 +1673,43 @@
     // Initialize stars on load
     fetchRepoStars();
 
+    function updateDeepSleepTooltip(isOn) {
+      const tooltip = isOn 
+        ? "External full hardware deep sleep with light off. Drive stays asleep until manually mounted."
+        : "Normal sleep. Laptop activity can wake the drive automatically.";
+      const card = document.getElementById("deepSleepCard");
+      const check = document.getElementById("deepSleepCheck");
+      if (card) card.title = tooltip;
+      if (check) check.title = tooltip;
+    }
+
     // Generic checkbox toggle handler (Settings grid)
     function toggleCheckbox(element) {
       element.classList.toggle("unchecked");
       const isChecked = !element.classList.contains("unchecked");
+      if (element.id === "deepSleepCheck" || element.id === "autoAwakeCheck") {
+        updateDeepSleepTooltip(isChecked);
+      }
       postToHost({ action: "checkboxToggle", id: element.id, checked: isChecked });
     }
 
-    // Audio Feedback (Web Audio API synthesised soft chime)
+    // Audio Feedback (Web Audio API synthesised soft chime with shared AudioContext)
+    let _sharedAudioCtx = null;
+    function getAudioContext() {
+      if (!_sharedAudioCtx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) _sharedAudioCtx = new AudioCtx();
+      }
+      if (_sharedAudioCtx && _sharedAudioCtx.state === "suspended") {
+        _sharedAudioCtx.resume().catch(() => {});
+      }
+      return _sharedAudioCtx;
+    }
+
     function playAudioFeedback(type = "success") {
       try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
+        const ctx = getAudioContext();
+        if (!ctx) return;
         if (type === "success") {
           const osc1 = ctx.createOscillator();
           const osc2 = ctx.createOscillator();
@@ -1761,7 +1781,7 @@
       }
     }
 
-    function completeProcessing(finalMsg = "Ready", subMsg = "Operation Complete") {
+    function completeProcessing(finalMsg = "Ready", subMsg = "Operation Complete", isError = false) {
       isProcessingActive = false;
       if (processingInterval) {
         clearInterval(processingInterval);
@@ -1775,15 +1795,16 @@
       if (procElem) procElem.textContent = finalMsg;
       if (modeElem) modeElem.textContent = subMsg;
 
-      playAudioFeedback("success");
+      playAudioFeedback(isError ? "failure" : "success");
       syncEjectedCount();
 
       clearTimeout(statusHoldTimer);
+      const holdTime = isError ? 5000 : 2000;
       statusHoldTimer = setTimeout(() => {
         if (bodyRow) bodyRow.classList.remove("active");
-        if (procElem) procElem.textContent = "Ready";
-        if (modeElem) modeElem.textContent = "System Idle";
-      }, 2000);
+        if (procElem) procElem.textContent = isError ? "Action Needed" : "Ready";
+        if (modeElem) modeElem.textContent = isError ? "Check Busy Files" : "System Idle";
+      }, holdTime);
     }
 
     // Host IPC callback when backend Process begins
@@ -1791,8 +1812,8 @@
       const targetLabel = targetParam ? targetParam : "";
       if (cmd === "eject-now") {
         startProcessingLoop("Ejecting Safely", targetLabel || "Selected Drives");
-      } else if (cmd === "idle-sleep") {
-        startProcessingLoop("Deep Sleep", targetLabel || "LED OFF Mode");
+      } else if (cmd === "idle-sleep" || cmd === "deep-sleep") {
+        startProcessingLoop("Deep Sleep", targetLabel || "Hardware Silence");
       } else if (cmd === "eject") {
         startProcessingLoop("Unmounting", targetLabel);
       } else if (cmd === "remount" || cmd === "remount-all") {
@@ -1803,17 +1824,18 @@
     };
 
     // Host IPC callback when backend Process completes
-    window.onOperationComplete = function(cmd, success) {
+    window.onOperationComplete = function(cmd, success, errMsg = "") {
+      const cleanErr = errMsg && errMsg.trim() ? errMsg.trim() : "";
       if (cmd === "eject-now") {
-        completeProcessing(success ? "Safe to Unplug" : "Eject Incomplete", success ? "Safe Ejection Done" : "Drive In Use");
-      } else if (cmd === "idle-sleep") {
-        completeProcessing(success ? "LED OFF Sleep" : "Sleep Aborted", success ? "Drive Asleep (LED OFF)" : "Drive Busy");
+        completeProcessing(success ? "Safe to Unplug" : "Eject Aborted", success ? "Safe Ejection Done" : (cleanErr || "Drive In Use"), !success);
+      } else if (cmd === "idle-sleep" || cmd === "deep-sleep") {
+        completeProcessing(success ? "Deep Sleep" : "Deep Sleep Aborted", success ? "Drive Asleep (Bus Silenced)" : (cleanErr || "Drive Busy"), !success);
       } else if (cmd === "eject") {
-        completeProcessing(success ? "Volume Unmounted" : "Unmount Failed", success ? "Clean Unmount Done" : "Drive Busy");
+        completeProcessing(success ? "Volume Unmounted" : "Deep Sleep Aborted", success ? "Clean Unmount Done" : (cleanErr || "Drive Busy"), !success);
       } else if (cmd === "remount" || cmd === "remount-all") {
-        completeProcessing(success ? "Drive Mounted" : "Mount Incomplete", success ? "Ready to Access" : "Check Filesystem");
+        completeProcessing(success ? "Drive Mounted" : "Mount Incomplete", success ? "Ready to Access" : (cleanErr || "Check Filesystem"), !success);
       } else {
-        completeProcessing(success ? "Success" : "Failed", "Operation Finished");
+        completeProcessing(success ? "Success" : "Failed", cleanErr || "Operation Finished", !success);
       }
     };
 
@@ -1823,7 +1845,9 @@
     let currentDriveOffset = 1;
 
     function changeCardScale(val) {
-      const scale = parseFloat(val) || 1.0;
+      let scale = parseFloat(val) || 1.0;
+      if (scale > 2.0) scale = 2.0;
+      if (scale < 1.0) scale = 1.0;
       currentScale = scale;
       hideDriveHoverPopup();
       localStorage.setItem("SafeDriveEjector_CardScale", scale);
@@ -1848,21 +1872,21 @@
 
       let targetW, targetH;
       if (scale === 1.0) {
-        // Individually verified Menubar 1X sizing
-        targetW = 192;
-        targetH = 316;
+        // Verified Menubar 1X sizing for dzoshi 190px card + shadow/scale
+        targetW = 202;
+        targetH = 330;
       } else if (scale === 1.25) {
-        // Individually verified Menubar 1.25X sizing
-        targetW = 240;
-        targetH = 395;
+        // Verified Menubar 1.25X sizing
+        targetW = 252;
+        targetH = 412;
       } else if (scale === 1.5) {
-        // Individually verified Menubar 1.5X sizing
-        targetW = 288;
-        targetH = 474;
+        // Verified Menubar 1.5X sizing
+        targetW = 303;
+        targetH = 495;
       } else {
-        // 2X, 3X, 4X untouched (no modification)
-        const baseW = 192;
-        const baseH = 316;
+        // 2X sizing (max scale supported)
+        const baseW = 202;
+        const baseH = 330;
         targetW = Math.round(baseW * scale);
         targetH = Math.round(baseH * scale);
       }
@@ -1873,7 +1897,14 @@
 
     function setDriveOffset(offset, event) {
       if (event) event.stopPropagation();
-      currentDriveOffset = Math.max(1, offset);
+      let target = parseInt(offset, 10) || 1;
+      // Cap strictly at 7 (which displays 7th to 10th Driver, total 10 drivers max)
+      if (target > 7) {
+        target = 1; // cycle back to 1st-4th
+      } else if (target < 1) {
+        target = 1;
+      }
+      currentDriveOffset = target;
       updatePagerActiveState();
       renderDriveNames();
     }
@@ -1885,15 +1916,19 @@
     }
 
     function updatePagerActiveState() {
+      // Ensure currentDriveOffset is strictly clamped to [1, 7]
+      if (currentDriveOffset > 7) currentDriveOffset = 1;
+      if (currentDriveOffset < 1) currentDriveOffset = 1;
+
       const badge = document.getElementById("driversPageBadge");
       if (badge) {
         badge.textContent = `${currentDriveOffset}-${currentDriveOffset + 3}`;
       }
 
-      // Dynamic base offset according to user specification:
+      // Dynamic base offset strictly in 3 stages:
       // 1 -> 1st, 2nd, 3rd, 4th
       // 4 -> 4th, 5th, 6th, 7th
-      // 7 -> 7th, 8th, 9th, 10th
+      // 7 -> 7th, 8th, 9th, 10th (Strict ceiling: 10 max)
       let baseOffset = 1;
       if (currentDriveOffset >= 7) {
         baseOffset = 7;
@@ -1930,12 +1965,22 @@
       if (!btn) return;
       const targetOffset = parseInt(btn.getAttribute("data-target-offset"), 10) || buttonIndex;
 
-      // If clicking already-active start button (e.g. 4th when on 4-7, or 7th when on 7-10), toggle back to 1st page
-      if (targetOffset === currentDriveOffset && targetOffset > 1) {
+      // Stage 3 (7th-10th): clicking the 10th driver button cycles back to 1st-4th
+      if (targetOffset >= 10) {
         setDriveOffset(1, event);
-      } else {
-        setDriveOffset(targetOffset, event);
+        return;
       }
+      // Clicking already active starting button steps back
+      if (targetOffset === 7 && currentDriveOffset === 7) {
+        setDriveOffset(4, event);
+        return;
+      }
+      if (targetOffset === 4 && currentDriveOffset === 4) {
+        setDriveOffset(1, event);
+        return;
+      }
+
+      setDriveOffset(targetOffset, event);
     }
 
     function getOrdinal(n) {
@@ -1954,17 +1999,30 @@
         .replace(/'/g, "&#039;");
     }
 
-    function showDriveHoverPopup(drive, rowId) {
+    function showDriveHoverPopup(drive, rowId, slotNum) {
       const popup = document.getElementById("driveHoverPopup");
       if (!popup) return;
+      const sNum = slotNum || (currentDriveOffset + rowId - 1);
+      const ordinalName = `${sNum}${getOrdinal(sNum)} Driver`;
+
       if (!drive || !drive.meta) {
-        hideDriveHoverPopup();
+        let html = `<div class="popup-title" style="display:flex; justify-content:space-between; align-items:center;"><span>${ordinalName}</span><span style="font-size:10px; color:rgba(255,255,255,0.4); font-weight:600;">Slot ${sNum}/10</span></div><div class="popup-divider"></div>`;
+        html += `
+          <div class="popup-row"><span class="popup-label">Status:</span><span class="popup-val" style="color: rgba(255,255,255,0.45);">No Device Connected</span></div>
+          <div class="popup-row"><span class="popup-label">Slot:</span><span class="popup-val">${sNum} of 10</span></div>
+        `;
+        popup.innerHTML = html;
+        popup.style.display = "block";
+        popup.classList.add("visible");
+        positionHoverPopup();
         return;
       }
+
       const meta = drive.meta;
-      let html = `<div class="popup-title">${escapeHtml(meta.title)}</div><div class="popup-divider"></div>`;
+      let html = `<div class="popup-title" style="display:flex; justify-content:space-between; align-items:center;"><span>${escapeHtml(meta.title)}</span><span style="font-size:10px; color:#38ef7d; font-weight:600; background:rgba(56,239,125,0.12); padding:1px 6px; border-radius:4px;">${ordinalName}</span></div><div class="popup-divider"></div>`;
       if (meta.is_parent) {
         html += `
+          <div class="popup-row"><span class="popup-label">Device Node:</span><span class="popup-val val-path">${escapeHtml(drive.id || meta.location)}</span></div>
           <div class="popup-row"><span class="popup-label">Location:</span><span class="popup-val">${escapeHtml(meta.location)}</span></div>
           <div class="popup-row"><span class="popup-label">Capacity:</span><span class="popup-val val-highlight">${escapeHtml(meta.capacity)}</span></div>
           <div class="popup-row"><span class="popup-label">Child Count:</span><span class="popup-val">${meta.child_count}</span></div>
@@ -1973,10 +2031,11 @@
       } else {
         const mountLabel = meta.drive_letter ? "Mount Path:" : "Mount Point:";
         html += `
+          <div class="popup-row"><span class="popup-label">Partition:</span><span class="popup-val val-path">${escapeHtml(drive.id || '')}</span></div>
           ${meta.drive_letter ? `<div class="popup-row"><span class="popup-label">Drive Letter:</span><span class="popup-val">${escapeHtml(meta.drive_letter)}</span></div>` : ''}
           <div class="popup-row vertical-wrap">
             <span class="popup-label">${mountLabel}</span>
-            <span class="popup-val val-path">${escapeHtml(meta.mount_point)}</span>
+            <span class="popup-val val-path">${escapeHtml(meta.mount_point || 'Not Mounted')}</span>
           </div>
           <div class="popup-row"><span class="popup-label">Capacity:</span><span class="popup-val val-highlight">${escapeHtml(meta.capacity)}</span></div>
           <div class="popup-row"><span class="popup-label">Type:</span><span class="popup-val val-type">${escapeHtml(meta.type)}</span></div>
@@ -2019,7 +2078,7 @@
 
     function renderDriveNames() {
       for (let i = 1; i <= 4; i++) {
-        const slotNum = currentDriveOffset + i - 1; // 1-based drive number
+        const slotNum = currentDriveOffset + i - 1; // 1-based drive number (strictly 1 to 10)
         const drive = currentDrives[slotNum - 1];
         const nameElem = document.getElementById(`driver${i}Name`);
         const cbElem = document.getElementById(`checkDriver${i}`);
@@ -2030,32 +2089,26 @@
           nameElem.removeAttribute("title");
           if (wrapElem) wrapElem.removeAttribute("title");
 
-          if (drive) {
-            // Strictly System Device Identifier (e.g. "disk7", "disk8s1", "disk9s1", "PhysicalDrive1", "E:")
-            const devId = (drive.id || drive.device_id || `disk${slotNum}`).replace(/^\/dev\//, '');
-            nameElem.textContent = devId;
+          // Standardized UI row naming: 1st Driver, 2nd Driver ... 10th Driver
+          const driverLabel = `${slotNum}${getOrdinal(slotNum)} Driver`;
+          nameElem.textContent = driverLabel;
 
-            // Bind single interactive hover popup
-            if (wrapElem) {
-              wrapElem.style.cursor = "pointer";
-              wrapElem.onmouseenter = function() {
-                showDriveHoverPopup(drive, i);
-              };
-              wrapElem.onmouseleave = function() {
-                hideDriveHoverPopup();
-              };
-            }
-          } else {
-            nameElem.textContent = `disk${slotNum}`;
-            if (wrapElem) {
-              wrapElem.style.cursor = "default";
-              wrapElem.onmouseenter = null;
-              wrapElem.onmouseleave = null;
-            }
+          // Interactive hover popup on all rows (showing physical SSD details or No Device Connected)
+          if (wrapElem) {
+            wrapElem.style.cursor = "pointer";
+            wrapElem.onmouseenter = function() {
+              showDriveHoverPopup(drive, i, slotNum);
+            };
+            wrapElem.onmouseleave = function() {
+              hideDriveHoverPopup();
+            };
           }
         }
 
         if (cbElem) {
+          if (driverCheckStates[slotNum] === undefined && drive && drive.is_sleep_selected === true) {
+            driverCheckStates[slotNum] = true;
+          }
           if (driverCheckStates[slotNum] === true) {
             cbElem.classList.remove("unchecked");
           } else {
@@ -2186,10 +2239,10 @@
       }
     }
 
-    // Mount Handlers (Row-specific: mounts that specific slot/drive)
+    // Mount Handlers (Row-specific: mounts that specific slot/drive or checked set)
     function triggerMount(rowId) {
+      const checkedTargets = getCheckedDriveTargets();
       if (rowId === 'all') {
-        const checkedTargets = getCheckedDriveTargets();
         if (checkedTargets.length > 0) {
           startProcessingLoop("Mounting", checkedTargets.join(", "));
           postToHost({ action: "mount", target: "checked", drivers: checkedTargets });
@@ -2201,15 +2254,22 @@
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
         const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
-        startProcessingLoop("Mounting", devId);
-        postToHost({ action: "mount", target: devId, slot: slotNum });
+        const slotLabel = `${slotNum}${getOrdinal(slotNum)} Driver`;
+
+        if (checkedTargets.length > 1 && (checkedTargets.includes(devId) || checkedTargets.includes(`disk${slotNum}`))) {
+          startProcessingLoop("Mounting", checkedTargets.join(", "));
+          postToHost({ action: "mount", target: "checked", drivers: checkedTargets });
+        } else {
+          startProcessingLoop("Mounting", slotLabel);
+          postToHost({ action: "mount", target: devId, slot: slotNum });
+        }
       }
     }
 
-    // Unmount Handlers (Row-specific: loops until unmount completes)
+    // Unmount Handlers (Row-specific: unmounts that specific slot/drive or checked set)
     function triggerUnmount(rowId) {
+      const checkedTargets = getCheckedDriveTargets();
       if (rowId === 'all') {
-        const checkedTargets = getCheckedDriveTargets();
         if (checkedTargets.length > 0) {
           startProcessingLoop("Unmounting", checkedTargets.join(", "));
           postToHost({ action: "unmount", target: "checked", drivers: checkedTargets });
@@ -2221,12 +2281,19 @@
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
         const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
-        if (drive && drive.is_parent) {
-          startProcessingLoop("Deep Sleep", devId);
+        const slotLabel = `${slotNum}${getOrdinal(slotNum)} Driver`;
+
+        if (checkedTargets.length > 1 && (checkedTargets.includes(devId) || checkedTargets.includes(`disk${slotNum}`))) {
+          startProcessingLoop("Unmounting", checkedTargets.join(", "));
+          postToHost({ action: "unmount", target: "checked", drivers: checkedTargets });
         } else {
-          startProcessingLoop("Unmounting", devId);
+          if (drive && drive.is_parent) {
+            startProcessingLoop("Deep Sleep", slotLabel);
+          } else {
+            startProcessingLoop("Unmounting", slotLabel);
+          }
+          postToHost({ action: "unmount", target: devId, slot: slotNum });
         }
-        postToHost({ action: "unmount", target: devId, slot: slotNum });
       }
     }
 
@@ -2311,15 +2378,29 @@
         if (pager) pager.classList.remove("expanded");
       });
 
-      // Mouse wheel scrolling for Drivers List section - rolls count and BSD names serial-wise
+      // Mouse wheel scrolling for Drivers List section - snaps between the 3 stages (1-4, 4-7, 7-10) up to 10 max
       const driversSec = document.querySelector(".drivers-section");
       if (driversSec) {
         driversSec.addEventListener("wheel", (e) => {
           e.preventDefault();
           if (e.deltaY > 6) {
-            setDriveOffset(Math.min(currentDriveOffset + 1, Math.max(1, (currentDrives.length || 8) - 1)));
+            // Scroll down: cycle 1-4 -> 4-7 -> 7-10 -> 1-4
+            if (currentDriveOffset < 4) {
+              setDriveOffset(4);
+            } else if (currentDriveOffset < 7) {
+              setDriveOffset(7);
+            } else {
+              setDriveOffset(1);
+            }
           } else if (e.deltaY < -6) {
-            setDriveOffset(Math.max(1, currentDriveOffset - 1));
+            // Scroll up: cycle 7-10 -> 4-7 -> 1-4 -> 7-10
+            if (currentDriveOffset > 4) {
+              setDriveOffset(4);
+            } else if (currentDriveOffset > 1) {
+              setDriveOffset(1);
+            } else {
+              setDriveOffset(7);
+            }
           }
         }, { passive: false });
       }
@@ -2332,29 +2413,8 @@
         changeCardScale(1.0);
       }
 
-      // If standalone preview in browser, initialize realistic drives with BSD names matching System Information
-      if (!window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.safeEjectBridge) {
-        window.updateUIState({
-          external_drives: [
-            {
-              id: "disk7",
-              name: "StoreJet Transcend Media",
-              location: "External",
-              decimal_size: "480.1 GB",
-              child_count: 3,
-              media_type: "Solid state",
-              volumes: [
-                { device_id: "disk8s1", name: "support-external-drive", mount_point: "/Volumes/support-external-drive", decimal_size: "200.39 GB", type_desc: "APFS Volume", is_mounted: true },
-                { device_id: "disk9s1", name: "Macbook Backup", mount_point: "/Volumes/Macbook Backup", decimal_size: "279.5 GB", type_desc: "APFS Volume", is_mounted: true },
-                { device_id: "disk10s1", name: "USBTest", mount_point: "/Volumes/USBTest", decimal_size: "500 MB", type_desc: "FAT32", is_mounted: false },
-                { device_id: "disk11s1", name: "Samsung T7", mount_point: "/Volumes/Samsung T7", decimal_size: "1.0 TB", type_desc: "APFS Volume", is_mounted: true },
-                { device_id: "disk12s1", name: "Extreme SSD 1TB", mount_point: "/Volumes/Extreme SSD 1TB", decimal_size: "1.0 TB", type_desc: "APFS Volume", is_mounted: true },
-                { device_id: "disk13s1", name: "Work Docs", mount_point: "/Volumes/Work Docs", decimal_size: "256 GB", type_desc: "ExFAT", is_mounted: false }
-              ]
-            }
-          ]
-        });
-      }
+      // Auto-sync real drive status from host immediately on card load
+      postToHost({ action: "requestSync" });
     });
 
     function triggerQuitApp() {
@@ -2453,7 +2513,10 @@
             else el.classList.add("unchecked");
           }
         };
-        setCb("autoAwakeCheck", cfg.remount_on_wake !== false);
+        const deepSleepOn = (cfg.deep_sleep_mode !== undefined) ? (cfg.deep_sleep_mode === true) : (cfg.remount_on_wake === false);
+        setCb("deepSleepCheck", deepSleepOn);
+        setCb("autoAwakeCheck", !deepSleepOn);
+        updateDeepSleepTooltip(deepSleepOn);
         setCb("startAtLoginCheck", cfg.start_at_login !== false);
         setCb("beforeSleepCheck", cfg.eject_on_sleep !== false);
         setCb("beforeLogoutCheck", cfg.eject_before_logout === true);

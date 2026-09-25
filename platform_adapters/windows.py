@@ -7,11 +7,9 @@ toast notifications, and power events (WM_POWERBROADCAST) using ctypes and Power
 import ctypes
 import json
 import logging
-import os
 import subprocess
 import sys
-import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List
 
 from core.models import DriveInfo, EjectResult, ProcessLockInfo, RemountResult, VolumeInfo
 from platform_adapters.base import PlatformAdapter

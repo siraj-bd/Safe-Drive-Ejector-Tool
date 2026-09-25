@@ -5,10 +5,15 @@ Eject Now logic, and drive state refreshing.
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+import os
+import re
+import subprocess
+import sys
+import threading
+from typing import List, Optional, Tuple
 
 from core.config import MAX_MANAGED_DRIVES, SafeEjectConfig, StateManager
-from core.models import DriveInfo, EjectResult, RemountResult, VolumeInfo
+from core.models import DriveInfo, EjectResult, RemountResult
 from platform_adapters.base import PlatformAdapter
 
 logger = logging.getLogger("SafeEject.VolumeManager")
@@ -50,15 +55,26 @@ class SSDVolumeManager:
         return external_drives
 
     def play_sound(self, sound_name: str):
-        """Play a macOS system sound if sounds are enabled."""
+        """Play a macOS system sound if sounds are enabled without leaking subprocesses."""
         if not self.config.play_sounds:
             return
         sound_file = f"/System/Library/Sounds/{sound_name}.aiff"
-        try:
-            import subprocess
-            subprocess.Popen(["afplay", sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        if not os.path.exists(sound_file):
+            return
+
+        def _play():
+            try:
+                subprocess.run(
+                    ["afplay", sound_file],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_play, daemon=True).start()
 
     def get_managed_drives(self) -> List[DriveInfo]:
         """Return only the managed external drives (up to 6)."""
@@ -111,8 +127,6 @@ class SSDVolumeManager:
             results.append(res)
             if res.success:
                 ejected_ids.append(drive.id)
-                for v in drive.volumes:
-                    ejected_vols.append(v.device_id)
 
         if ejected_ids or ejected_vols:
             StateManager.save_ejected_drives(ejected_ids, ejected_vols)
@@ -126,9 +140,23 @@ class SSDVolumeManager:
         return results
 
     def mount_target(self, target_id: str) -> RemountResult:
-        """Mount a specific volume or drive by ID, UUID, or name."""
+        """
+        Mount a specific target (volume or parent drive) following safe wake order:
+        1. Explicit wake/mount operation requested.
+        2. Resolve physical parent for target.
+        3. Execute mount on target.
+        4. VERIFY mount success.
+        5. ONLY on verified success: clear sleeping parent state in StateManager so discovery resumes.
+        """
         logger.info(f"Manual Mount requested for: {target_id}")
         clean_target = target_id.strip()
+        clean_id = clean_target.replace("/dev/", "")
+
+        # Resolve physical parent using adapter logic / metadata
+        parent_id = ""
+        if hasattr(self.adapter, "resolve_parent_for_target"):
+            parent_id = self.adapter.resolve_parent_for_target(clean_id)
+
         drives = self.get_all_external_drives()
 
         # 1. Prioritize volume match so mounting disk8s1 targets only that volume
@@ -136,34 +164,44 @@ class SSDVolumeManager:
             for v in d.volumes:
                 if (
                     v.device_id.lower() == clean_target.lower()
-                    or (v.device_id.replace("/dev/", "").lower() == clean_target.replace("/dev/", "").lower())
+                    or (v.device_id.replace("/dev/", "").lower() == clean_id.lower())
                     or (v.uuid and v.uuid.lower() == clean_target.lower())
                     or (v.name and v.name.lower() == clean_target.lower())
                 ):
                     res = self.adapter.mount_volume(v.device_id)
+                    # Safe sequence: verify success before clearing sleep state!
                     if res.success:
-                        StateManager.remove_ejected_target(v.device_id)
+                        resolved_parent = parent_id or d.id
+                        StateManager.remove_ejected_target(v.device_id, parent_id=resolved_parent)
+                        logger.info(f"Mount verified for volume {v.device_id}; cleared sleeping state for parent {resolved_parent}.")
                     return res
 
         # 2. Check if target matches drive ID or primary UUID
         for d in drives:
             if (
                 d.id.lower() == clean_target.lower()
-                or (d.id.replace("/dev/", "").lower() == clean_target.replace("/dev/", "").lower())
+                or (d.id.replace("/dev/", "").lower() == clean_id.lower())
                 or (d.primary_uuid and d.primary_uuid.lower() == clean_target.lower())
             ):
                 res = self.adapter.mount_drive(d.id)
+                # Safe sequence: verify success before clearing sleep state!
                 if res.success:
                     StateManager.remove_ejected_target(d.id)
                     for v in d.volumes:
                         StateManager.remove_ejected_target(v.device_id)
+                    logger.info(f"Mount verified for drive {d.id}; cleared sleeping state.")
                 return res
 
-        # Direct fallback
-        import re
-        if re.search(r"disk\d+s\d+", clean_target.lower()):
-            return self.adapter.mount_volume(clean_target)
-        return self.adapter.mount_drive(clean_target)
+        # 3. Direct fallback
+        if re.search(r"disk\d+s\d+", clean_id.lower()):
+            res = self.adapter.mount_volume(clean_id)
+        else:
+            res = self.adapter.mount_drive(clean_id)
+
+        if res.success:
+            StateManager.remove_ejected_target(clean_id, parent_id=parent_id)
+
+        return res
 
     def unmount_target(self, target_id: str) -> EjectResult:
         """Unmount a specific volume or drive by ID, UUID, or name."""
@@ -197,24 +235,24 @@ class SSDVolumeManager:
                 return self.deep_sleep_drive(d.id)
 
         # 3. Direct fallback: if target looks like a volume partition (e.g. disk8s1)
-        import re
         if re.search(r"disk\d+s\d+", clean_target.lower()):
             return self.adapter.unmount_volume(clean_target)
 
         return self.adapter.eject_drive(clean_target)
 
-    def deep_sleep_drive(self, drive_id: str) -> EjectResult:
+    def deep_sleep_drive(self, drive_id: str, is_explicit: bool = True) -> EjectResult:
         """
-        Deep Sleep / LED-OFF Sleep workflow:
+        Deep Sleep / Hardware Silence workflow:
         1. Flush filesystem buffers (sync).
-        2. Safely unmount all mounted child volumes of target physical drive.
-        3. If ANY required unmount fails, ABORT immediately and report error (NEVER force-eject).
+        2. Detect & cleanly unmount active Time Machine / APFS snapshot dependencies via adapter.
+           If ANY snapshot unmount fails, ABORT immediately (NEVER force-eject, NEVER save sleeping state).
+        3. Safely unmount all mounted child volumes of target physical drive.
+           If ANY required unmount fails, ABORT immediately.
         4. On macOS, cleanly teardown synthesized APFS container dependencies (diskutil unmountDisk).
            If ANY container teardown fails, ABORT immediately.
         5. Only after all unmounts and teardowns succeed, eject physical parent disk (diskutil eject <parentId>).
-        6. Record sleeping relevant volumes for selective Auto-Wake.
+        6. Record sleeping parent disk and child volumes with strict separation between explicit and idle sleep.
         """
-        import subprocess, sys
         clean_id = drive_id.strip().replace("/dev/", "")
         drives = self.get_all_external_drives()
 
@@ -237,13 +275,34 @@ class SSDVolumeManager:
 
         # 1. Flush filesystem buffers
         try:
-            if sys.platform == "darwin":
+            if sys.platform == "darwin" and type(self.adapter).__name__ == "MacOSAdapter":
                 subprocess.run(["sync"], check=False)
         except Exception:
             pass
 
-        # 2. Safely unmount all mounted child volumes
-        vols_to_unmount = [v for v in target_drive.volumes if v.is_mounted]
+        # 2. Detect & cleanly unmount active Time Machine / APFS snapshots
+        if hasattr(self.adapter, "teardown_snapshots_for_drive"):
+            snap_abort = self.adapter.teardown_snapshots_for_drive(target_drive)
+            if snap_abort:
+                return snap_abort
+
+        # 3. Safely unmount all mounted child volumes
+        # Verify true mount status from OS mount table to avoid stale cache issues
+        real_mounted_devs = set()
+        if sys.platform == "darwin" and type(self.adapter).__name__ == "MacOSAdapter":
+            try:
+                proc = subprocess.run(["mount"], capture_output=True, text=True, check=False)
+                for line in proc.stdout.splitlines():
+                    m = re.match(r"^/dev/(\S+)\s+on\s+", line)
+                    if m:
+                        real_mounted_devs.add(m.group(1).lower())
+            except Exception:
+                pass
+
+        vols_to_unmount = [
+            v for v in target_drive.volumes
+            if v.is_mounted or v.device_id.replace("/dev/", "").lower() in real_mounted_devs
+        ]
         unmounted_vols: List[str] = []
 
         for v in vols_to_unmount:
@@ -258,7 +317,7 @@ class SSDVolumeManager:
                 )
             unmounted_vols.append(v.device_id)
 
-        # 3. Teardown associated synthesized APFS container disks (e.g. disk8, disk9)
+        # 4. Teardown associated synthesized APFS container disks (e.g. disk8, disk9)
         if hasattr(self.adapter, "get_apfs_containers_for_disk"):
             containers = self.adapter.get_apfs_containers_for_disk(target_drive.id)
             for c_id in containers:
@@ -271,15 +330,21 @@ class SSDVolumeManager:
                         message=f"Deep Sleep aborted: Container {c_id} in use ({c_res.message})",
                     )
 
-        # 4. Only after all successful unmounts & container teardowns, eject physical parent disk
+        # 5. Only after all successful unmounts & container teardowns, eject physical parent disk
         eject_res = self.adapter.eject_drive(target_drive.id)
         if eject_res.success:
-            if unmounted_vols:
-                StateManager.save_ejected_drives([], unmounted_vols, append=True)
+            if hasattr(self.adapter, "cache_drive_info"):
+                self.adapter.cache_drive_info(target_drive)
+            StateManager.save_ejected_drives(
+                [target_drive.id],
+                unmounted_vols,
+                append=True,
+                is_explicit_deep_sleep=is_explicit,
+            )
             return EjectResult(
                 target=target_drive.id,
                 success=True,
-                message=f"Drive {target_drive.id} in Deep Sleep (LED OFF). {len(unmounted_vols)} volume(s) safely unmounted.",
+                message=f"Drive {target_drive.id} in Deep Sleep (Hardware Silence). {len(unmounted_vols)} volume(s) safely unmounted.",
             )
         else:
             logger.warning(f"Parent eject for {target_drive.id} failed after unmounting volumes: {eject_res.message}")

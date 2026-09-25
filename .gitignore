@@ -27,6 +27,7 @@ MANIFEST
 # Swift & Xcode Build Artifacts
 .build/
 .swiftpm/
+.module-cache/
 xcuserdata/
 DerivedData/
 *.swiftdoc

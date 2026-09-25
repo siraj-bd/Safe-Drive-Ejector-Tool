@@ -12,7 +12,7 @@ Unit tests for Safe-Drive-Ejector-Tool functional features:
 import time
 import unittest
 
-from core.config import MAX_MANAGED_DRIVES, SLEEP_TIMER_PRESETS, SafeEjectConfig, StateManager
+from core.config import MAX_MANAGED_DRIVES, SafeEjectConfig, StateManager
 from core.engine import SafeEjectEngine
 from core.idle_monitor import IdleMonitor
 from core.models import DriveInfo, EjectResult, RemountResult, VolumeInfo
@@ -45,6 +45,8 @@ class FeatureMockAdapter(PlatformAdapter):
         return EjectResult(target=drive_id, success=True, message=f"Ejected {drive_id}")
 
     def unmount_volume(self, volume_id: str):
+        if getattr(self, "fail_unmount", False):
+            return EjectResult(target=volume_id, success=False, message="Resource busy")
         self.ejected.append(volume_id)
         self.unmounted_volumes.append(volume_id)
         return EjectResult(target=volume_id, success=True, message=f"Unmounted {volume_id}")
@@ -72,6 +74,12 @@ class FeatureMockAdapter(PlatformAdapter):
 
 
 class TestFunctionalFeatures(unittest.TestCase):
+
+    def setUp(self):
+        StateManager.clear_ejected_drives()
+
+    def tearDown(self):
+        StateManager.clear_ejected_drives()
 
     def test_sleep_timer_presets(self):
         config = SafeEjectConfig()
@@ -631,6 +639,226 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertEqual(win_dict["mount_point"], "E:\\")
         self.assertEqual(win_dict["type_desc"], "exFAT")
         self.assertEqual(win_dict["decimal_size"], "1 TB")
+
+    def test_disk7_vs_dev_disk7_selection_normalization(self):
+        """Verify disk7 and /dev/disk7 both normalize to match parent drive and store primary UUID."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", uuid="UUID-DISK7-PARENT", is_mounted=True)
+        drive = DriveInfo(id="/dev/disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Toggle using UI format "disk7" (without /dev/)
+        is_sel, msg = engine.toggle_sleep_selection("disk7")
+        self.assertTrue(is_sel)
+        self.assertIn("UUID-DISK7-PARENT", config.selected_sleep_drive_uuids)
+
+        # Config check returns True for both disk7 and /dev/disk7
+        self.assertTrue(config.is_drive_sleep_selected("UUID-DISK7-PARENT", "disk7"))
+        self.assertTrue(config.is_drive_sleep_selected("UUID-DISK7-PARENT", "/dev/disk7"))
+
+    def test_parent_selection_persistence(self):
+        """Verify parent UUID saved in config persists across config reloads."""
+        config1 = SafeEjectConfig(selected_sleep_drive_uuids=["UUID-PARENT-TEST"])
+        dict_data = config1.to_dict()
+
+        config2 = SafeEjectConfig.from_dict(dict_data)
+        self.assertIn("UUID-PARENT-TEST", config2.selected_sleep_drive_uuids)
+        self.assertTrue(config2.is_drive_sleep_selected("UUID-PARENT-TEST", "disk7"))
+        self.assertFalse(config2.is_drive_sleep_selected("UUID-OTHER", "disk4"))
+
+    def test_parent_precedence_in_idle_sleep_execution(self):
+        """Verify _on_idle_sleep executes parent Deep Sleep once and skips child branches."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", mount_point="/Volumes/Macbook Backup", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1, vol2], is_sleep_selected=True)
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        results = engine._on_idle_sleep([])
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].target, "disk7")
+        self.assertIn("disk7", adapter.ejected)
+
+    def test_deep_sleep_failure_returns_non_zero_exit_code(self):
+        """Verify that CLI exits with code 1 when volume unmount fails during Deep Sleep."""
+        from unittest.mock import patch
+        from ui.cli import cmd_deep_sleep, cmd_eject_single
+
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+        adapter.fail_unmount = True  # force failure
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        class FakeArgs:
+            targets = ["disk7"]
+            target = "disk7"
+
+        # cmd_eject_single should exit with code 1
+        with self.assertRaises(SystemExit) as cm:
+            cmd_eject_single(engine, FakeArgs())
+        self.assertEqual(cm.exception.code, 1)
+
+        # cmd_deep_sleep should exit with code 1
+        with self.assertRaises(SystemExit) as cm:
+            cmd_deep_sleep(engine, FakeArgs())
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_sleeping_parent_recorded_in_state_manager(self):
+        """Verify that parent disk7 is recorded in StateManager.drive_ids upon Deep Sleep."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        res = volume_mgr.deep_sleep_drive("disk7")
+        self.assertTrue(res.success)
+        self.assertIn("Hardware Silence", res.message)
+
+        # Check StateManager
+        state = StateManager.load_ejected_drives()
+        self.assertIn("disk7", state.get("drive_ids", []))
+        self.assertIn("disk8s1", state.get("volume_identifiers", []))
+        self.assertTrue(StateManager.is_parent_sleeping("disk7"))
+
+    def test_safe_mount_wake_sequence_and_parent_cleanup(self):
+        """Verify that mounting child disk8s1 verifies success and clears parent disk7 from sleeping state."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=False)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        def resolve_parent(tgt):
+            return "disk7"
+        adapter.resolve_parent_for_target = resolve_parent
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        # Prepopulate sleep state
+        StateManager.save_ejected_drives(["disk7"], ["disk8s1"], append=False)
+        self.assertTrue(StateManager.is_parent_sleeping("disk7"))
+
+        # 1. Mount child volume disk8s1
+        res = volume_mgr.mount_target("disk8s1")
+        self.assertTrue(res.success)
+        self.assertIn("disk8s1", adapter.mounted_volumes)
+
+        # Verify parent disk7 is cleared from sleeping state on verified success
+        self.assertFalse(StateManager.is_parent_sleeping("disk7"))
+        state = StateManager.load_ejected_drives()
+        self.assertNotIn("disk7", state.get("drive_ids", []))
+        self.assertNotIn("disk8s1", state.get("volume_identifiers", []))
+
+    def test_safe_mount_wake_sequence_retains_state_on_failure(self):
+        """Verify that if mount fails, sleeping parent state is retained to prevent uncontrolled polling."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", mount_point="/Volumes/support-external-drive", is_mounted=False)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        # Simulate mount failure
+        def fail_mount(vid):
+            return RemountResult(target=vid, success=False, message="Device not configured")
+        adapter.mount_volume = fail_mount
+        adapter.resolve_parent_for_target = lambda tgt: "disk7"
+
+        config = SafeEjectConfig(show_notifications=False)
+        volume_mgr = SSDVolumeManager(config=config, adapter=adapter)
+
+        # Prepopulate sleep state
+        StateManager.save_ejected_drives(["disk7"], ["disk8s1"], append=False)
+
+        res = volume_mgr.mount_target("disk8s1")
+        self.assertFalse(res.success)
+
+        # State must NOT be cleared when mount fails
+        self.assertTrue(StateManager.is_parent_sleeping("disk7"))
+        state = StateManager.load_ejected_drives()
+        self.assertIn("disk7", state.get("drive_ids", []))
+
+    def test_macos_adapter_hardware_silence_gates(self):
+        """Verify MacOSAdapter suppresses diskutil list when all external drives sleep and never queries diskutil info."""
+        from platform_adapters.macos import (
+            MacOSAdapter,
+            _save_hardware_cache,
+        )
+        from unittest.mock import patch, MagicMock
+
+        adapter = MacOSAdapter()
+
+        # Seed hardware_cache.json with static metadata (pure metadata, no physical state)
+        sample_cache = {
+            "disk7": {
+                "id": "disk7",
+                "name": "StoreJet Transcend Media",
+                "size_bytes": 480103981056,
+                "bus_protocol": "USB",
+                "is_external": True,
+                "is_removable": True,
+                "is_virtual": False,
+                "media_type": "Solid state",
+                "child_count": 2,
+                "volumes": [
+                    {
+                        "device_id": "disk8s1",
+                        "name": "support-external-drive",
+                        "mount_point": "/Volumes/support-external-drive",
+                        "size_bytes": 240000000000,
+                        "fs_type": "APFS",
+                        "type_desc": "APFS Volume",
+                        "uuid": "UUID-1",
+                        "is_mounted": True,
+                    }
+                ],
+            }
+        }
+        _save_hardware_cache(sample_cache)
+        StateManager.save_ejected_drives(["disk7"], ["disk8s1"], append=False)
+
+        with patch("subprocess.run") as mock_run:
+            # 1. When all external drives are sleeping: ZERO diskutil list execution
+            drives = adapter.get_drives()
+            mock_run.assert_not_called()
+            self.assertEqual(len(drives), 1)
+            self.assertEqual(drives[0].id, "disk7")
+            # All volumes must be reported unmounted
+            self.assertFalse(drives[0].volumes[0].is_mounted)
+
+            # 2. In mixed state: active internal/external drive + sleeping parent disk7
+            StateManager.save_ejected_drives(["disk7"], ["disk8s1"], append=False)
+            mock_plist = {
+                "WholeDisks": ["disk0", "disk7"],
+                "AllDisksAndPartitions": [
+                    {"DeviceIdentifier": "disk0", "Partitions": []},
+                    {"DeviceIdentifier": "disk7", "Partitions": []},
+                ],
+            }
+            import plistlib
+            mock_proc = MagicMock()
+            mock_proc.stdout = plistlib.dumps(mock_plist)
+            mock_run.return_value = mock_proc
+
+            drives_mixed = adapter.get_drives()
+            # Verify diskutil info was NOT called for disk7
+            info_calls = [
+                c for c in mock_run.call_args_list
+                if len(c[0]) > 0 and isinstance(c[0][0], list) and "info" in c[0][0] and "disk7" in c[0][0]
+            ]
+            self.assertEqual(len(info_calls), 0, "diskutil info must NEVER be called on sleeping parent disk7")
 
 
 if __name__ == "__main__":

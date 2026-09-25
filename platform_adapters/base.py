@@ -3,8 +3,8 @@ Abstract Base Class for OS Platform Adapters.
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional
-from core.models import DriveInfo, VolumeInfo, ProcessLockInfo, EjectResult, RemountResult
+from typing import Callable, List
+from core.models import DriveInfo, ProcessLockInfo, EjectResult, RemountResult
 
 
 class PlatformAdapter(ABC):

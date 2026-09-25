@@ -11,7 +11,7 @@ class CustomCardPanel: NSPanel {
 }
 
 // MARK: - SafeEject Custom Menu Bar App with Card UI
-class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDelegate, WKUIDelegate {
+class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
     var statusItem: NSStatusItem!
     var panel: CustomCardPanel!
     var webView: WKWebView!
@@ -21,10 +21,12 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     var globalClickMonitor: Any?
     var livePollingTimer: Timer?
     var isSyncingState = false
+    var isOperationInProgress = false
 
     var backgroundIdleTimer: Timer?
-    var configuredTimerSeconds: Double = 300.0
-    var autoAwakeEnabled: Bool = true
+    var configuredTimerSeconds: Double = 0.0
+    var autoAwakeEnabled: Bool = false
+    var deepSleepMode: Bool = true
     var beforeSleepEnabled: Bool = true
     var beforeLogoutEnabled: Bool = false
     var isSleepingDueToIdle: Bool = false
@@ -119,7 +121,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     }
 
     func setupPanel() {
-        let initialSize = NSSize(width: 192, height: 316)
+        let initialSize = NSSize(width: 202, height: 330)
         panel = CustomCardPanel(
             contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -143,6 +145,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
         webView = WKWebView(frame: NSRect(origin: .zero, size: initialSize), configuration: config)
         webView.uiDelegate = self
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground") // 100% transparent background
         if #available(macOS 12.0, *) {
             webView.underPageBackgroundColor = .clear
@@ -253,12 +256,14 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             guard let self = self else { return }
             let status = self.queryStatusJSON()
             if let config = status["config"] as? [String: Any] {
-                let sec = (config["sleep_timer_seconds"] as? NSNumber)?.doubleValue ?? 300.0
-                let awake = (config["remount_on_wake"] as? Bool) ?? true
+                let sec = (config["sleep_timer_seconds"] as? NSNumber)?.doubleValue ?? 0.0
+                let deepSleep = (config["deep_sleep_mode"] as? Bool) ?? true
+                let awake = (config["remount_on_wake"] as? Bool) ?? (!deepSleep)
                 let sleepEject = (config["eject_on_sleep"] as? Bool) ?? true
                 let logoutEject = (config["eject_before_logout"] as? Bool) ?? false
                 DispatchQueue.main.async {
                     self.configuredTimerSeconds = sec
+                    self.deepSleepMode = deepSleep
                     self.autoAwakeEnabled = awake
                     self.beforeSleepEnabled = sleepEject
                     self.beforeLogoutEnabled = logoutEject
@@ -270,16 +275,19 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     @objc func handleSystemSleep(_ notification: Notification) {
         NSLog("SafeEjectMenuBar: macOS System will sleep (beforeSleepEnabled: \(beforeSleepEnabled))")
         if beforeSleepEnabled {
-            // Safe unmount volumes before system sleep without physical eject
-            runCLICommand(["idle-sleep"])
+            runCLICommand(["idle-sleep"], isBackground: true)
         }
     }
 
     @objc func handleSystemWake(_ notification: Notification) {
-        NSLog("SafeEjectMenuBar: macOS System did wake (autoAwakeEnabled: \(autoAwakeEnabled))")
-        if autoAwakeEnabled {
+        NSLog("SafeEjectMenuBar: macOS System did wake (deepSleepMode: \(deepSleepMode), autoAwakeEnabled: \(autoAwakeEnabled), isSleepingDueToIdle: \(isSleepingDueToIdle))")
+        // Deep Sleep ON: External drives remain 100% asleep until manual Mount.
+        // Deep Sleep OFF: Only resume if put to sleep automatically by idle timer.
+        if !deepSleepMode && autoAwakeEnabled && isSleepingDueToIdle {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.runCLICommand(["remount-all", "--only-recorded"])
+                guard let self = self, self.isSleepingDueToIdle, !self.deepSleepMode else { return }
+                self.isSleepingDueToIdle = false
+                self.runCLICommand(["remount-all", "--only-recorded"], isBackground: true)
             }
         }
     }
@@ -310,23 +318,26 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         let idleSec = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
         lastKnownIdleSeconds = idleSec
 
-        // Touch Wake: Mac was idle & drives put to sleep, now touched Mac (< 3.0s idle)
+        // Touch Wake: ONLY fires if drive was put to sleep by genuine inactivity AND Deep Sleep is OFF!
+        // When Deep Sleep is ON: External drives remain 100% asleep until manual Mount.
         if idleSec < 3.0 {
             if isSleepingDueToIdle {
                 isSleepingDueToIdle = false
-                NSLog("SafeEjectMenuBar: User touch detected (<3s). Auto-awakening drives...")
-                if autoAwakeEnabled {
-                    runCLICommand(["remount-all", "--only-recorded"])
+                if !deepSleepMode && autoAwakeEnabled {
+                    NSLog("SafeEjectMenuBar: User touch detected (<3s) with Deep Sleep OFF. Auto-awakening idle drives...")
+                    runCLICommand(["remount-all", "--only-recorded"], isBackground: true)
+                } else {
+                    NSLog("SafeEjectMenuBar: User touch detected (<3s), but Deep Sleep is ON. Drive remains 100% asleep until manual Mount.")
                 }
             }
         }
 
-        // Idle Sleep: Inactivity reached or passed configured timer
+        // Idle Sleep: Inactivity reached or passed configured timer (> 0)
         if configuredTimerSeconds > 0 && idleSec >= configuredTimerSeconds {
-            if !isSleepingDueToIdle {
+            if !isSleepingDueToIdle && !isOperationInProgress {
                 isSleepingDueToIdle = true
-                NSLog("SafeEjectMenuBar: Mac idle for \(Int(idleSec))s (>= \(Int(configuredTimerSeconds))s). Triggering idle-sleep...")
-                runCLICommand(["idle-sleep"])
+                NSLog("SafeEjectMenuBar: Mac idle for \(Int(idleSec))s (>= \(Int(configuredTimerSeconds))s). Triggering idle sleep...")
+                runCLICommand(["idle-sleep"], isBackground: true)
             }
         }
     }
@@ -393,8 +404,9 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     func startLivePolling() {
         stopLivePolling()
         syncRealDriveState()
-        livePollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        livePollingTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             guard let self = self, self.panel.isVisible else { return }
+            if self.isOperationInProgress { return }
             self.syncRealDriveState()
         }
         if let timer = livePollingTimer {
@@ -434,20 +446,37 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    func syncRealDriveState() {
-        if isSyncingState { return }
+    func syncRealDriveState(force: Bool = false) {
+        if isOperationInProgress { return }
+        if isSyncingState && !force { return }
         isSyncingState = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             defer { self?.isSyncingState = false }
             guard let self = self else { return }
+            if self.isOperationInProgress { return }
             let statusObj = self.queryStatusJSON()
             guard !statusObj.isEmpty else { return }
+
+            if let cfg = statusObj["config"] as? [String: Any] {
+                let sec = (cfg["sleep_timer_seconds"] as? NSNumber)?.doubleValue ?? self.configuredTimerSeconds
+                let deepSleep = (cfg["deep_sleep_mode"] as? Bool) ?? self.deepSleepMode
+                let awake = (cfg["remount_on_wake"] as? Bool) ?? (!deepSleep)
+                DispatchQueue.main.async {
+                    self.configuredTimerSeconds = sec
+                    self.deepSleepMode = deepSleep
+                    self.autoAwakeEnabled = awake
+                }
+            }
+
             if let jsonData = try? JSONSerialization.data(withJSONObject: statusObj),
                let jsonString = String(data: jsonData, encoding: .utf8) {
                 DispatchQueue.main.async {
-                    guard self.panel.isVisible else { return }
                     let js = "if(window.updateUIState){ window.updateUIState(\(jsonString)); }"
-                    self.webView.evaluateJavaScript(js, completionHandler: nil)
+                    self.webView.evaluateJavaScript(js) { _, error in
+                        if let error = error {
+                            NSLog("SafeEjectMenuBar evaluateJavaScript error: \(error.localizedDescription)")
+                        }
+                    }
                 }
             }
         }
@@ -469,14 +498,18 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
         switch action {
         case "mount":
-            let target = body["target"] as? String ?? (body["driverId"] != nil ? "\(body["driverId"]!)" : "all")
+            let target = body["target"] as? String ?? (body["driverId"] != nil ? "\(body["driverId"]!)" : "")
             let drivers = body["drivers"] as? [String] ?? []
             if (target == "all" || target == "checked") && !drivers.isEmpty {
                 runCLICommand(["remount"] + drivers)
-            } else if target == "all" {
-                runCLICommand(["remount-all"])
-            } else {
+            } else if !target.isEmpty && target != "all" {
                 runCLICommand(["remount", target])
+            } else if target == "all" {
+                if !drivers.isEmpty {
+                    runCLICommand(["remount"] + drivers)
+                } else {
+                    runCLICommand(["remount-all"])
+                }
             }
         case "unmount":
             let target = body["target"] as? String ?? (body["driverId"] != nil ? "\(body["driverId"]!)" : "all")
@@ -537,9 +570,12 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             }
         case "checkboxToggle":
             if let id = body["id"] as? String, let checked = body["checked"] as? Bool {
-                if id == "autoAwakeCheck" {
-                    self.autoAwakeEnabled = checked
-                    runCLICommand(["config", "set", "remount_on_wake", checked ? "true" : "false"])
+                if id == "deepSleepCheck" || id == "autoAwakeCheck" {
+                    let isDeepSleep = (id == "deepSleepCheck") ? checked : (!checked)
+                    self.deepSleepMode = isDeepSleep
+                    self.autoAwakeEnabled = !isDeepSleep
+                    runCLICommand(["config", "set", "deep_sleep_mode", isDeepSleep ? "true" : "false"])
+                    runCLICommand(["config", "set", "remount_on_wake", (!isDeepSleep) ? "true" : "false"])
                 } else if id == "beforeSleepCheck" {
                     self.beforeSleepEnabled = checked
                     runCLICommand(["config", "set", "eject_on_sleep", checked ? "true" : "false"])
@@ -564,6 +600,8 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             if let urlStr = body["url"] as? String, let url = URL(string: urlStr) {
                 NSWorkspace.shared.open(url)
             }
+        case "requestSync":
+            syncRealDriveState(force: true)
         case "quit":
             NSApplication.shared.terminate(self)
         default:
@@ -598,11 +636,22 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         completionHandler(response == .alertFirstButtonReturn)
     }
 
+    // MARK: - WKNavigationDelegate (Sync real drives as soon as card page finishes loading)
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        syncRealDriveState(force: true)
+    }
+
     func queryStatusJSON() -> [String: Any] {
         guard !scriptPath.isEmpty else { return [:] }
         let task = Process()
         task.launchPath = pythonPath
         task.arguments = [scriptPath, "json-status"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        let projectDir = (scriptPath as NSString).deletingLastPathComponent
+        env["PYTHONPATH"] = projectDir
+        task.environment = env
+        task.currentDirectoryPath = projectDir
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -610,37 +659,90 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
         do {
             try task.run()
+
+            let watchdog = DispatchWorkItem { [weak task] in
+                if let task = task, task.isRunning {
+                    task.terminate()
+                }
+            }
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 4.0, execute: watchdog)
+
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
+            watchdog.cancel()
 
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 return json
             }
-        } catch {}
+        } catch {
+            NSLog("SafeEjectMenuBar queryStatusJSON error: \(error)")
+        }
         return [:]
     }
 
-    func runCLICommand(_ args: [String]) {
+    func runCLICommand(_ args: [String], isBackground: Bool = false) {
         guard !scriptPath.isEmpty else { return }
         let cmd = args.first ?? ""
         let targetParam = args.dropFirst().joined(separator: ", ")
 
-        DispatchQueue.main.async {
-            let startJs = "if(window.onOperationStart){ window.onOperationStart('\(cmd)', '\(targetParam)'); }"
-            self.webView.evaluateJavaScript(startJs, completionHandler: nil)
+        // Only explicit user commands from the UI card (not background idle sleep) clear isSleepingDueToIdle
+        if !isBackground && (cmd == "eject" || cmd == "deep-sleep" || cmd == "eject-now" || cmd == "remount" || cmd == "remount-all") {
+            self.isSleepingDueToIdle = false
+        }
+
+        self.isOperationInProgress = true
+
+        if !isBackground {
+            DispatchQueue.main.async {
+                let startJs = "if(window.onOperationStart){ window.onOperationStart('\(cmd)', '\(targetParam)'); }"
+                self.webView.evaluateJavaScript(startJs, completionHandler: nil)
+            }
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
             task.launchPath = self.pythonPath
             task.arguments = [self.scriptPath] + args
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            let projectDir = (self.scriptPath as NSString).deletingLastPathComponent
+            env["PYTHONPATH"] = projectDir
+            task.environment = env
+            task.currentDirectoryPath = projectDir
+
+            let errPipe = Pipe()
+            task.standardError = errPipe
+
+            let watchdog = DispatchWorkItem { [weak task] in
+                if let task = task, task.isRunning {
+                    task.terminate()
+                }
+            }
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 15.0, execute: watchdog)
+
             try? task.run()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
+            watchdog.cancel()
+
             let success = (task.terminationStatus == 0)
+            var errMsg = ""
+            if !success {
+                let rawErr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                errMsg = rawErr.replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "'", with: "\\'")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+            }
             DispatchQueue.main.async {
-                self.syncRealDriveState()
-                let finishJs = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success)); }"
-                self.webView.evaluateJavaScript(finishJs, completionHandler: nil)
+                let delay = (cmd == "eject" || cmd == "deep-sleep" || cmd == "eject-now" || cmd == "idle-sleep") ? 1.5 : 0.05
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    self.isOperationInProgress = false
+                    self.syncRealDriveState()
+                }
+                if !isBackground {
+                    let finishJs = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success), '\(errMsg)'); }"
+                    self.webView.evaluateJavaScript(finishJs, completionHandler: nil)
+                }
             }
         }
     }
