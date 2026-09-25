@@ -133,7 +133,7 @@ jobs:
 
       - name: Build Windows Standalone Executables and Archive
         run: |
-          build_windows.bat
+          cmd /c build_windows.bat
 
       - name: Optional Authenticode Code Signing
         if: env.WINDOWS_CERTIFICATE != ''
