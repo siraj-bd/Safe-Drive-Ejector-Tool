@@ -73,7 +73,7 @@ class SafeEjectTrayApp:
             "SafeEject",
             image,
             "SafeEject: External Disk Protector",
-            menu=self._build_menu,
+            menu=pystray.Menu(self._build_menu),
         )
 
         logger.info("Running System Tray event loop...")
@@ -140,7 +140,7 @@ class SafeEjectTrayApp:
         items.append(pystray.Menu.SEPARATOR)
         items.append(pystray.MenuItem("Quit SafeEject", self._on_quit))
 
-        return pystray.Menu(*items)
+        return (item for item in items)
 
     def _on_eject_all(self, icon, item):
         self.engine.eject_all_external(manual=True)
