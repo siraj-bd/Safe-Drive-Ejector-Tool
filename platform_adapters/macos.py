@@ -442,6 +442,28 @@ class MacOSAdapter(PlatformAdapter):
                     message=f"Drive {clean_id} ejected successfully.",
                 )
             else:
+                # If diskutil eject failed initially, attempt clean unmount of APFS containers & child volumes then retry
+                logger.info(f"Direct eject of {clean_id} returned non-zero ({proc.stderr.strip()}); attempting clean container & volume unmount teardown...")
+                try:
+                    subprocess.run(["sync"], check=False)
+                    containers = self.get_apfs_containers_for_disk(clean_id)
+                    for c in containers:
+                        subprocess.run(["diskutil", "unmountDisk", "force", c], capture_output=True, timeout=10, check=False)
+                    if matching_drive:
+                        for vol in matching_drive.volumes:
+                            v_dev = vol.device_id.replace("/dev/", "").strip()
+                            subprocess.run(["diskutil", "unmount", "force", v_dev], capture_output=True, timeout=10, check=False)
+                    # Retry diskutil eject after volume teardown
+                    retry_proc = subprocess.run(["diskutil", "eject", clean_id], capture_output=True, text=True, timeout=15)
+                    if retry_proc.returncode == 0:
+                        return EjectResult(
+                            target=clean_id,
+                            success=True,
+                            message=f"Drive {clean_id} ejected successfully.",
+                        )
+                except Exception as e:
+                    logger.debug(f"Container unmount fallback error: {e}")
+
                 err_msg = proc.stderr.strip() or proc.stdout.strip()
                 return EjectResult(
                     target=clean_id,
@@ -581,22 +603,36 @@ class MacOSAdapter(PlatformAdapter):
                 mount_path = match.group(3)
                 if snap_dev in vol_identifiers or any(vid in snap_dev for vid in vol_identifiers):
                     logger.info(f"Detected mounted APFS snapshot dependency: {mount_path} on {snap_dev}")
-                    try:
-                        # Use force unmount for read-only snapshot mounts to prevent hanging backupd locks
-                        unmount_res = subprocess.run(["diskutil", "unmount", "force", mount_path], capture_output=True, text=True, timeout=10)
-                        if unmount_res.returncode != 0:
+                    # Allow up to 3 attempts with brief pause for backupd to release snapshot
+                    unmounted = False
+                    err = ""
+                    for attempt in range(3):
+                        try:
+                            unmount_res = subprocess.run(["diskutil", "unmount", "force", mount_path], capture_output=True, text=True, timeout=5)
+                            if unmount_res.returncode == 0:
+                                unmounted = True
+                                break
                             err = unmount_res.stderr.strip() or unmount_res.stdout.strip()
-                            logger.error(f"Failed to unmount snapshot {mount_path}: {err}")
-                            return EjectResult(
-                                target=target_drive.id,
-                                success=False,
-                                message=f"Deep Sleep aborted: Snapshot {mount_path} in use ({err})",
-                            )
-                    except subprocess.TimeoutExpired:
+                        except subprocess.TimeoutExpired:
+                            err = "unmount timed out"
+
+                        # Check if snapshot was unmounted automatically by backupd in the background
+                        try:
+                            check_m = subprocess.run(["mount"], capture_output=True, text=True, timeout=2)
+                            if mount_path not in check_m.stdout:
+                                unmounted = True
+                                break
+                        except Exception:
+                            pass
+
+                        time.sleep(0.5)
+
+                    if not unmounted:
+                        logger.error(f"Failed to unmount snapshot {mount_path}: {err}")
                         return EjectResult(
                             target=target_drive.id,
                             success=False,
-                            message=f"Deep Sleep aborted: Snapshot {mount_path} unmount timed out",
+                            message=f"Deep Sleep aborted: Snapshot {mount_path} in use ({err})",
                         )
         return None
 

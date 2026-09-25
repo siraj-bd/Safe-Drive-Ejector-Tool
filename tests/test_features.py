@@ -941,6 +941,32 @@ class TestFunctionalFeatures(unittest.TestCase):
         self.assertIn("disk9s1", adapter.unmounted_volumes)
         self.assertNotIn("disk8s1", adapter.unmounted_volumes)
 
+    def test_all_child_volumes_targeted_triggers_parent_deep_sleep(self):
+        """Verify targeting all child partitions of a physical SSD executes parent Deep Sleep (Hardware Silence)."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", uuid="UUID-VOL1", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", uuid="UUID-VOL2", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # 1. Eject both child volumes via eject_targets -> Must execute parent Deep Sleep on disk7
+        results = engine.eject_targets(["disk8s1", "disk9s1"])
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].target, "disk7")
+        self.assertIn("disk7", adapter.ejected)
+
+        # 2. Eject both child volumes via eject_now -> Must execute parent Deep Sleep on disk7
+        adapter.ejected.clear()
+        results_now = engine.volume_manager.eject_now(targets=["disk8s1", "disk9s1"])
+        self.assertEqual(len(results_now), 1)
+        self.assertTrue(results_now[0].success)
+        self.assertEqual(results_now[0].target, "disk7")
+        self.assertIn("disk7", adapter.ejected)
+
 
 if __name__ == "__main__":
     unittest.main()

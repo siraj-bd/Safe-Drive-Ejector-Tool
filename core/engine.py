@@ -385,10 +385,10 @@ class SafeEjectEngine:
     def eject_targets(self, targets: List[str]) -> List[EjectResult]:
         """
         Eject or unmount specific targets enforcing Parent Precedence:
-        - If parent physical drive (e.g. disk7) is among targets:
+        - If parent physical drive (e.g. disk7) is among targets, OR if all mounted child volumes are targeted:
           Execute Deep Sleep once for the entire SSD (eject parent, Hardware Silence).
           Any child partitions of this parent in targets are subsumed.
-        - If only child partition(s) are targeted (e.g. disk8s1):
+        - If only a subset of child partition(s) are targeted (e.g. disk8s1):
           Unmount partition only; never eject parent disk or turn LED off.
         """
         if not targets:
@@ -399,11 +399,23 @@ class SafeEjectEngine:
         results: List[EjectResult] = []
         handled_targets = set()
 
-        # 1. Identify parent drives present in targets
+        # 1. Identify parent drives present in targets or whose all mounted child volumes are targeted
         for d in all_drives:
             d_id = d.id.replace("/dev/", "")
-            if d_id in clean_targets or d.primary_uuid in clean_targets:
-                logger.info(f"Parent Precedence: Executing Deep Sleep for physical parent drive {d.id}...")
+            mounted_vids = [
+                v.device_id.replace("/dev/", "")
+                for v in d.volumes
+                if v.is_mounted
+            ]
+            parent_targeted = d_id in clean_targets or (d.primary_uuid and d.primary_uuid in clean_targets)
+            all_vols_targeted = (
+                len(clean_targets) > 1 and
+                len(mounted_vids) > 0 and
+                all(vid in clean_targets or any(v.uuid and v.uuid in clean_targets for v in d.volumes if v.device_id.replace("/dev/", "") == vid) for vid in mounted_vids)
+            )
+
+            if parent_targeted or all_vols_targeted:
+                logger.info(f"Parent Precedence: Executing Deep Sleep for physical parent drive {d.id} (parent_targeted={parent_targeted}, all_vols_targeted={all_vols_targeted})...")
                 res = self.volume_manager.deep_sleep_drive(d.id)
                 results.append(res)
                 if res.success:

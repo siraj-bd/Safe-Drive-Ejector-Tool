@@ -97,11 +97,24 @@ class SSDVolumeManager:
             all_drives = self.get_all_external_drives()
             handled_targets = set()
 
-            # 1. Identify parent drives present in targets (Parent Precedence)
+            # 1. Identify parent drives present in targets or whose all mounted child volumes are targeted (Parent Precedence)
             for d in all_drives:
                 d_id = d.id.replace("/dev/", "")
-                if d_id in clean_targets or (d.primary_uuid and d.primary_uuid in clean_targets):
-                    res = self.unmount_target(d.id)
+                mounted_vids = [
+                    v.device_id.replace("/dev/", "")
+                    for v in d.volumes
+                    if v.is_mounted
+                ]
+                parent_targeted = d_id in clean_targets or (d.primary_uuid and d.primary_uuid in clean_targets)
+                all_vols_targeted = (
+                    len(clean_targets) >= len(mounted_vids) and
+                    len(mounted_vids) > 0 and
+                    all(vid in clean_targets or any(v.uuid and v.uuid in clean_targets for v in d.volumes if v.device_id.replace("/dev/", "") == vid) for vid in mounted_vids)
+                )
+
+                if parent_targeted or all_vols_targeted:
+                    logger.info(f"Parent Precedence in Eject Now: Executing Deep Sleep for physical parent drive {d.id}...")
+                    res = self.deep_sleep_drive(d.id)
                     results.append(res)
                     if res.success:
                         ejected_ids.append(d.id)
