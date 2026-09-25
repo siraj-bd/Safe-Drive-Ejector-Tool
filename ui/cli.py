@@ -18,6 +18,28 @@ if _project_root not in sys.path:
 from core.config import StateManager
 from core.engine import SafeEjectEngine
 
+# Configure stdout and stderr safely for Windows console encoding
+if sys.platform == "win32":
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream and hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+def _status_icon(success: bool, stream=None) -> str:
+    """Return '✓' / '✗' if encodable on the output stream, else ASCII fallback '[OK]' / '[FAIL]'."""
+    target_stream = stream or sys.stdout
+    encoding = getattr(target_stream, "encoding", None) or "utf-8"
+    icon = "✓" if success else "✗"
+    try:
+        icon.encode(encoding)
+        return icon
+    except (UnicodeEncodeError, LookupError):
+        return "[OK]" if success else "[FAIL]"
+
 
 def setup_logger(level_name: str = "INFO"):
     level = getattr(logging, level_name.upper(), logging.INFO)
@@ -128,7 +150,7 @@ def cmd_eject_all(engine: SafeEjectEngine, args):
 
     success_all = True
     for res in results:
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.target}: {res.message}")
         if not res.success:
             success_all = False
@@ -154,7 +176,7 @@ def cmd_eject_single(engine: SafeEjectEngine, args):
     all_success = True
     failed_messages = []
     for res in results:
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.message}")
         if not res.success:
             all_success = False
@@ -189,7 +211,7 @@ def cmd_deep_sleep(engine: SafeEjectEngine, args):
     for t in targets:
         print(f"\nPutting '{t}' into Deep Sleep (Hardware Silence)...")
         res = engine.deep_sleep_target(t)
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.message}\n")
         if not res.success:
             all_success = False
@@ -220,7 +242,7 @@ def cmd_remount_all(engine: SafeEjectEngine, args):
     print(f"\nRemounting {item_count} previously sleeping drive/volume item(s)...")
     results = engine.remount_all_ejected(only_if_recorded=only_recorded)
     for res in results:
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.target}: {res.message}")
     print()
 
@@ -234,7 +256,7 @@ def cmd_remount_single(engine: SafeEjectEngine, args):
             continue
         print(f"\nRemounting '{target}'...")
         res = engine.remount_single(target)
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.message}\n")
 
 
@@ -263,7 +285,7 @@ def cmd_eject_now(engine: SafeEjectEngine, args):
         results = engine.eject_targets(targets)
         success_count = sum(1 for r in results if r.success)
         for res in results:
-            icon = "✓" if res.success else "✗"
+            icon = _status_icon(res.success)
             print(f" {icon} {res.target}: {res.message}")
         print(f"\nCompleted: {success_count}/{len(results)} targets safely processed.\n")
         return
@@ -282,7 +304,7 @@ def cmd_eject_now(engine: SafeEjectEngine, args):
     results = engine.eject_now()
     print("\nResults:")
     for res in results:
-        icon = "✓" if res.success else "✗"
+        icon = _status_icon(res.success)
         print(f" {icon} {res.target}: {res.message}")
     print()
 
@@ -363,7 +385,7 @@ def cmd_idle_sleep(engine: SafeEjectEngine, args):
     results = engine._on_idle_sleep([])
     if results:
         for r in results:
-            icon = "✓" if r.success else "✗"
+            icon = _status_icon(r.success)
             print(f" {icon} {r.target}: {r.message}")
         all_success = all(r.success for r in results)
         if not all_success:
