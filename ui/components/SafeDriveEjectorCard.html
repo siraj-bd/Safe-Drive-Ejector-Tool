@@ -318,10 +318,13 @@
       justify-content: center;
       gap: 7px;
       width: 100%;
+      max-width: 100%;
       min-height: 14px;
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-sizing: border-box;
+      overflow: hidden;
     }
 
     .status-body-row.active {
@@ -399,6 +402,10 @@
       align-items: flex-start;
       justify-content: center;
       gap: 1px;
+      min-width: 0;
+      max-width: calc(100% - 22px);
+      overflow: hidden;
+      box-sizing: border-box;
     }
 
     .status-processing-text {
@@ -411,6 +418,9 @@
       text-overflow: ellipsis;
       line-height: 1.15;
       text-align: left;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
     }
 
     .status-mode-text {
@@ -423,6 +433,9 @@
       text-overflow: ellipsis;
       line-height: 1.15;
       text-align: left;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
     }
 
     /* ==========================================================================
@@ -687,6 +700,21 @@
       justify-content: space-between;
       height: 15px;
       gap: 4px;
+    }
+
+    .driver-row.empty-slot {
+      opacity: 0.35;
+    }
+    .driver-row.empty-slot .bookmarkBtn {
+      pointer-events: none;
+      filter: grayscale(1);
+    }
+    .driver-row.empty-slot .custom-checkbox {
+      pointer-events: none;
+      cursor: default;
+    }
+    .driver-row.empty-slot .driver-name-text {
+      cursor: default;
     }
 
     .driver-name-wrap {
@@ -1823,19 +1851,37 @@
       }
     };
 
+    function sanitizeStatusBadge(errMsg, defaultText) {
+      if (!errMsg || typeof errMsg !== "string") return defaultText;
+      const lower = errMsg.toLowerCase();
+      if (lower.includes("in use") || lower.includes("busy") || lower.includes("resource busy")) return "Drive In Use";
+      if (lower.includes("permission") || lower.includes("denied")) return "Permission Denied";
+      if (lower.includes("failed to unmount")) return "Unmount Failed";
+      if (lower.includes("failed to mount")) return "Mount Failed";
+      if (lower.includes("not found")) return "Drive Not Found";
+      if (lower.includes("timeout") || lower.includes("timed out")) return "Timed Out";
+
+      // Strip timestamps and logger tags: e.g. 17:10:36 [INFO]
+      let cleaned = errMsg.replace(/^\d{2,4}[-\/:\d\s]+\[\w+\]\s*/g, '').trim();
+      if (cleaned.length > 22) {
+        return defaultText;
+      }
+      return cleaned || defaultText;
+    }
+
     // Host IPC callback when backend Process completes
     window.onOperationComplete = function(cmd, success, errMsg = "") {
       const cleanErr = errMsg && errMsg.trim() ? errMsg.trim() : "";
       if (cmd === "eject-now") {
-        completeProcessing(success ? "Safe to Unplug" : "Eject Aborted", success ? "Safe Ejection Done" : (cleanErr || "Drive In Use"), !success);
+        completeProcessing(success ? "Safe to Unplug" : "Eject Aborted", success ? "Safe Ejection Done" : sanitizeStatusBadge(cleanErr, "Drive In Use"), !success);
       } else if (cmd === "idle-sleep" || cmd === "deep-sleep") {
-        completeProcessing(success ? "Deep Sleep" : "Deep Sleep Aborted", success ? "Drive Asleep (Bus Silenced)" : (cleanErr || "Drive Busy"), !success);
+        completeProcessing(success ? "Deep Sleep" : "Deep Sleep Aborted", success ? "Drive Asleep (Bus Silenced)" : sanitizeStatusBadge(cleanErr, "Drive Busy"), !success);
       } else if (cmd === "eject") {
-        completeProcessing(success ? "Volume Unmounted" : "Deep Sleep Aborted", success ? "Clean Unmount Done" : (cleanErr || "Drive Busy"), !success);
+        completeProcessing(success ? "Volume Unmounted" : "Unmount Aborted", success ? "Clean Unmount Done" : sanitizeStatusBadge(cleanErr, "Drive Busy"), !success);
       } else if (cmd === "remount" || cmd === "remount-all") {
-        completeProcessing(success ? "Drive Mounted" : "Mount Incomplete", success ? "Ready to Access" : (cleanErr || "Check Filesystem"), !success);
+        completeProcessing(success ? "Drive Mounted" : "Mount Incomplete", success ? "Ready to Access" : sanitizeStatusBadge(cleanErr, "Check Filesystem"), !success);
       } else {
-        completeProcessing(success ? "Success" : "Failed", cleanErr || "Operation Finished", !success);
+        completeProcessing(success ? "Success" : "Failed", sanitizeStatusBadge(cleanErr, "Operation Finished"), !success);
       }
     };
 
@@ -2080,9 +2126,18 @@
       for (let i = 1; i <= 4; i++) {
         const slotNum = currentDriveOffset + i - 1; // 1-based drive number (strictly 1 to 10)
         const drive = currentDrives[slotNum - 1];
+        const rowElem = document.querySelector(`.driver-row[data-driver-id="${i}"]`);
         const nameElem = document.getElementById(`driver${i}Name`);
         const cbElem = document.getElementById(`checkDriver${i}`);
         const wrapElem = nameElem ? nameElem.closest('.driver-name-wrap') : null;
+
+        if (rowElem) {
+          if (!drive) {
+            rowElem.classList.add("empty-slot");
+          } else {
+            rowElem.classList.remove("empty-slot");
+          }
+        }
 
         if (nameElem) {
           // Strictly remove title attribute to prevent duplicate browser/OS tooltip!
@@ -2095,7 +2150,7 @@
 
           // Interactive hover popup on all rows (showing physical SSD details or No Device Connected)
           if (wrapElem) {
-            wrapElem.style.cursor = "pointer";
+            wrapElem.style.cursor = drive ? "pointer" : "default";
             wrapElem.onmouseenter = function() {
               showDriveHoverPopup(drive, i, slotNum);
             };
@@ -2106,14 +2161,19 @@
         }
 
         if (cbElem) {
-          if (driverCheckStates[slotNum] === undefined && drive && drive.is_sleep_selected === true) {
-            driverCheckStates[slotNum] = true;
-          }
-          if (driverCheckStates[slotNum] === true) {
-            cbElem.classList.remove("unchecked");
-          } else {
+          if (!drive) {
             cbElem.classList.add("unchecked");
             driverCheckStates[slotNum] = false;
+          } else {
+            if (driverCheckStates[slotNum] === undefined && drive && drive.is_sleep_selected === true) {
+              driverCheckStates[slotNum] = true;
+            }
+            if (driverCheckStates[slotNum] === true) {
+              cbElem.classList.remove("unchecked");
+            } else {
+              cbElem.classList.add("unchecked");
+              driverCheckStates[slotNum] = false;
+            }
           }
         }
       }
@@ -2144,6 +2204,7 @@
       if (!elem) return;
 
       const drive = currentDrives[slotNum - 1];
+      if (!drive) return; // Ignore clicks on empty driver slots
       const isNowChecked = elem.classList.contains("unchecked"); // will become checked
       driverCheckStates[slotNum] = isNowChecked;
 
@@ -2253,16 +2314,15 @@
       } else {
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
-        const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
+        if (!drive || !drive.id) {
+          console.warn(`[SafeEject] Mount ignored: No device connected in slot ${slotNum}`);
+          return;
+        }
+        const devId = drive.id.replace(/^\/dev\//, '');
         const slotLabel = `${slotNum}${getOrdinal(slotNum)} Driver`;
 
-        if (checkedTargets.length > 1 && (checkedTargets.includes(devId) || checkedTargets.includes(`disk${slotNum}`))) {
-          startProcessingLoop("Mounting", checkedTargets.join(", "));
-          postToHost({ action: "mount", target: "checked", drivers: checkedTargets });
-        } else {
-          startProcessingLoop("Mounting", slotLabel);
-          postToHost({ action: "mount", target: devId, slot: slotNum });
-        }
+        startProcessingLoop("Mounting", slotLabel);
+        postToHost({ action: "mount", target: devId, slot: slotNum });
       }
     }
 
@@ -2280,20 +2340,19 @@
       } else {
         const slotNum = currentDriveOffset + rowId - 1;
         const drive = currentDrives[slotNum - 1];
-        const devId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : `disk${slotNum}`) : `disk${slotNum}`;
+        if (!drive || !drive.id) {
+          console.warn(`[SafeEject] Unmount ignored: No device connected in slot ${slotNum}`);
+          return;
+        }
+        const devId = drive.id.replace(/^\/dev\//, '');
         const slotLabel = `${slotNum}${getOrdinal(slotNum)} Driver`;
 
-        if (checkedTargets.length > 1 && (checkedTargets.includes(devId) || checkedTargets.includes(`disk${slotNum}`))) {
-          startProcessingLoop("Unmounting", checkedTargets.join(", "));
-          postToHost({ action: "unmount", target: "checked", drivers: checkedTargets });
+        if (drive.is_parent) {
+          startProcessingLoop("Deep Sleep", slotLabel);
         } else {
-          if (drive && drive.is_parent) {
-            startProcessingLoop("Deep Sleep", slotLabel);
-          } else {
-            startProcessingLoop("Unmounting", slotLabel);
-          }
-          postToHost({ action: "unmount", target: devId, slot: slotNum });
+          startProcessingLoop("Unmounting", slotLabel);
         }
+        postToHost({ action: "unmount", target: devId, slot: slotNum });
       }
     }
 

@@ -93,7 +93,33 @@ class SSDVolumeManager:
 
         if targets:
             logger.info(f"Executing 'Eject Now' for {len(targets)} selected target(s): {targets}")
-            for t in targets:
+            clean_targets = [t.strip().replace("/dev/", "") for t in targets if t and t.strip()]
+            all_drives = self.get_all_external_drives()
+            handled_targets = set()
+
+            # 1. Identify parent drives present in targets (Parent Precedence)
+            for d in all_drives:
+                d_id = d.id.replace("/dev/", "")
+                if d_id in clean_targets or (d.primary_uuid and d.primary_uuid in clean_targets):
+                    res = self.unmount_target(d.id)
+                    results.append(res)
+                    if res.success:
+                        ejected_ids.append(d.id)
+                    handled_targets.add(d_id)
+                    if d.primary_uuid:
+                        handled_targets.add(d.primary_uuid)
+                    for v in d.volumes:
+                        v_id = v.device_id.replace("/dev/", "")
+                        handled_targets.add(v_id)
+                        if v.uuid:
+                            handled_targets.add(v.uuid)
+                        if v.name:
+                            handled_targets.add(v.name)
+
+            # 2. Process remaining targets (child partitions whose parent was NOT targeted)
+            for t in clean_targets:
+                if t in handled_targets:
+                    continue
                 res = self.unmount_target(t)
                 results.append(res)
                 if res.success:
@@ -101,13 +127,15 @@ class SSDVolumeManager:
                         ejected_vols.append(t)
                     else:
                         ejected_ids.append(t)
+                handled_targets.add(t)
+
             if ejected_ids or ejected_vols:
                 StateManager.save_ejected_drives(ejected_ids, ejected_vols)
-                if self.config.show_notifications:
-                    self.adapter.show_notification(
-                        "SafeEject",
-                        f"Safely unmounted/ejected {len(results)} target(s).",
-                    )
+            if self.config.show_notifications:
+                self.adapter.show_notification(
+                    "SafeEject",
+                    f"Safely unmounted/ejected {len(results)} target(s).",
+                )
             return results
 
         logger.info("Executing 'Eject Now' for all managed drives...")
@@ -130,12 +158,11 @@ class SSDVolumeManager:
 
         if ejected_ids or ejected_vols:
             StateManager.save_ejected_drives(ejected_ids, ejected_vols)
-            if self.config.show_notifications:
-                count = len(ejected_ids) + len(ejected_vols)
-                self.adapter.show_notification(
-                    "SafeEject",
-                    f"Safely unmounted/ejected {count} item(s) successfully.",
-                )
+        if self.config.show_notifications:
+            self.adapter.show_notification(
+                "SafeEject",
+                f"Safely ejected {len(results)} drive(s) successfully.",
+            )
 
         return results
 

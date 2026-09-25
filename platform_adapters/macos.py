@@ -412,11 +412,18 @@ class MacOSAdapter(PlatformAdapter):
 
     def eject_drive(self, drive_id: str) -> EjectResult:
         """Eject an entire drive using diskutil eject."""
-        logger.info(f"Attempting to eject drive: {drive_id}")
+        clean_id = drive_id.replace("/dev/", "").strip()
+        logger.info(f"Attempting to eject drive: {clean_id}")
+
+        # Stop any active Time Machine backup session first to release locks
+        try:
+            subprocess.run(["tmutil", "stopbackup"], capture_output=True, timeout=3, check=False)
+        except Exception:
+            pass
 
         # Check for any open files first
         drives = self.get_drives()
-        matching_drive = next((d for d in drives if d.id == drive_id), None)
+        matching_drive = next((d for d in drives if d.id == clean_id or d.id == drive_id), None)
         blocking_procs: List[ProcessLockInfo] = []
 
         if matching_drive:
@@ -427,46 +434,68 @@ class MacOSAdapter(PlatformAdapter):
 
         # Run diskutil eject
         try:
-            proc = subprocess.run(["diskutil", "eject", drive_id], capture_output=True, text=True, timeout=15)
+            proc = subprocess.run(["diskutil", "eject", clean_id], capture_output=True, text=True, timeout=15)
             if proc.returncode == 0:
                 return EjectResult(
-                    target=drive_id,
+                    target=clean_id,
                     success=True,
-                    message=f"Drive {drive_id} ejected successfully.",
+                    message=f"Drive {clean_id} ejected successfully.",
                 )
             else:
                 err_msg = proc.stderr.strip() or proc.stdout.strip()
                 return EjectResult(
-                    target=drive_id,
+                    target=clean_id,
                     success=False,
-                    message=f"Failed to eject {drive_id}: {err_msg}",
+                    message=f"Failed to eject {clean_id}: {err_msg}",
                     blocking_processes=blocking_procs,
                 )
         except subprocess.TimeoutExpired:
             return EjectResult(
-                target=drive_id,
+                target=clean_id,
                 success=False,
-                message=f"Eject timed out for {drive_id} (I/O busy)",
+                message=f"Eject timed out for {clean_id} (I/O busy)",
                 blocking_processes=blocking_procs,
             )
 
     def unmount_volume(self, volume_id: str) -> EjectResult:
         """Unmount a specific volume using diskutil unmount with timeout."""
-        logger.info(f"Attempting to unmount volume: {volume_id}")
+        clean_id = volume_id.replace("/dev/", "").strip()
+        logger.info(f"Attempting to unmount volume: {clean_id}")
+
+        # Stop any active Time Machine backup session first to release locks and prevent diskarbitrationd auto-remount
         try:
-            proc = subprocess.run(["diskutil", "unmount", volume_id], capture_output=True, text=True, timeout=15)
+            subprocess.run(["tmutil", "stopbackup"], capture_output=True, timeout=3, check=False)
+        except Exception:
+            pass
+
+        # Check and detach any mounted APFS snapshot on this volume
+        try:
+            m_proc = subprocess.run(["mount"], capture_output=True, text=True, check=False, timeout=3)
+            for line in m_proc.stdout.splitlines():
+                match = re.search(r"(\S+@/dev/(\S+))\s+on\s+(/\S+)\s+\(", line)
+                if match:
+                    snap_dev = match.group(2).lower()
+                    mount_path = match.group(3)
+                    if clean_id.lower() in snap_dev:
+                        logger.info(f"Detaching snapshot dependency: {mount_path} on {snap_dev}")
+                        subprocess.run(["diskutil", "unmount", "force", mount_path], capture_output=True, text=True, timeout=10)
+        except Exception:
+            pass
+
+        try:
+            proc = subprocess.run(["diskutil", "unmount", clean_id], capture_output=True, text=True, timeout=15)
             if proc.returncode == 0:
                 return EjectResult(
-                    target=volume_id,
+                    target=clean_id,
                     success=True,
-                    message=f"Volume {volume_id} unmounted successfully.",
+                    message=f"Volume {clean_id} unmounted successfully.",
                 )
             else:
                 err_msg = proc.stderr.strip() or proc.stdout.strip()
                 return EjectResult(
-                    target=volume_id,
+                    target=clean_id,
                     success=False,
-                    message=f"Failed to unmount {volume_id}: {err_msg}",
+                    message=f"Failed to unmount {clean_id}: {err_msg}",
                 )
         except subprocess.TimeoutExpired:
             return EjectResult(
@@ -526,6 +555,12 @@ class MacOSAdapter(PlatformAdapter):
         associated with the target drive's volumes (e.g. com.apple.TimeMachine...backup@/dev/disk9s1).
         If any snapshot is busy or fails to unmount, return EjectResult(success=False).
         """
+        # Stop any active Time Machine backup session first to release locks and prevent diskarbitrationd auto-remount
+        try:
+            subprocess.run(["tmutil", "stopbackup"], capture_output=True, timeout=3, check=False)
+        except Exception:
+            pass
+
         try:
             proc = subprocess.run(["mount"], capture_output=True, text=True, check=False, timeout=3)
             mount_output = proc.stdout
@@ -566,53 +601,98 @@ class MacOSAdapter(PlatformAdapter):
         return None
 
     def mount_drive(self, drive_id: str) -> RemountResult:
-        """Mount all volumes on a drive using diskutil mountDisk with timeout."""
-        logger.info(f"Attempting to mount drive: {drive_id}")
+        """Mount all volumes on a drive using diskutil mountDisk with APFS container support."""
+        clean_id = drive_id.replace("/dev/", "").strip()
+        logger.info(f"Attempting to mount drive: {clean_id}")
         try:
-            proc = subprocess.run(["diskutil", "mountDisk", drive_id], capture_output=True, text=True, timeout=15)
-            output = proc.stdout.strip() + " " + proc.stderr.strip()
-            if proc.returncode == 0:
+            proc = subprocess.run(["diskutil", "mountDisk", clean_id], capture_output=True, text=True, timeout=15)
+            output = (proc.stdout.strip() + " " + proc.stderr.strip()).strip()
+
+            # Ensure any synthesized APFS containers for this physical drive are also mounted
+            containers = self.get_apfs_containers_for_disk(clean_id)
+            for c in containers:
+                try:
+                    subprocess.run(["diskutil", "mountDisk", c], capture_output=True, text=True, timeout=15)
+                except Exception as e:
+                    logger.debug(f"Failed to mount APFS container {c}: {e}")
+
+            # Verify against active mount table: even if diskutil exited non-zero solely due
+            # to unmountable EFI partition (diskXs1), if data volumes are mounted it is a success.
+            real_mounted = set()
+            try:
+                m_proc = subprocess.run(["mount"], capture_output=True, text=True, timeout=5)
+                for line in m_proc.stdout.splitlines():
+                    m = re.match(r"^/dev/(\S+)\s+on\s+", line)
+                    if m:
+                        real_mounted.add(m.group(1).lower())
+            except Exception:
+                pass
+
+            target_prefixes = [clean_id.lower()] + [c.lower() for c in containers]
+            is_any_mounted = False
+            for dev in real_mounted:
+                for prefix in target_prefixes:
+                    if dev.startswith(prefix):
+                        is_any_mounted = True
+                        break
+                if is_any_mounted:
+                    break
+
+            if proc.returncode == 0 or is_any_mounted:
                 return RemountResult(
-                    target=drive_id,
+                    target=clean_id,
                     success=True,
-                    message=f"Drive {drive_id} mounted successfully.",
+                    message=f"Drive {clean_id} mounted successfully.",
                 )
             else:
                 return RemountResult(
-                    target=drive_id,
+                    target=clean_id,
                     success=False,
-                    message=f"Failed to mount {drive_id}: {output.strip()}",
+                    message=f"Failed to mount {clean_id}: {output}",
                 )
         except subprocess.TimeoutExpired:
             return RemountResult(
-                target=drive_id,
+                target=clean_id,
                 success=False,
-                message=f"Mount timed out for {drive_id}",
+                message=f"Mount timed out for {clean_id}",
             )
 
     def mount_volume(self, volume_id: str) -> RemountResult:
         """Mount a specific volume using diskutil mount with timeout."""
-        logger.info(f"Attempting to mount volume: {volume_id}")
+        clean_id = volume_id.replace("/dev/", "").strip()
+        logger.info(f"Attempting to mount volume: {clean_id}")
         try:
-            proc = subprocess.run(["diskutil", "mount", volume_id], capture_output=True, text=True, timeout=15)
+            proc = subprocess.run(["diskutil", "mount", clean_id], capture_output=True, text=True, timeout=15)
             output = proc.stdout.strip()
             if proc.returncode == 0:
                 return RemountResult(
-                    target=volume_id,
+                    target=clean_id,
                     success=True,
-                    message=f"Volume {volume_id} mounted successfully.",
+                    message=f"Volume {clean_id} mounted successfully.",
                 )
-            else:
-                return RemountResult(
-                    target=volume_id,
-                    success=False,
-                    message=f"Failed to mount {volume_id}: {proc.stderr.strip() or output}",
-                )
+            # If diskutil mount returned non-zero, check if volume is already mounted
+            try:
+                m_proc = subprocess.run(["mount"], capture_output=True, text=True, timeout=5)
+                for line in m_proc.stdout.splitlines():
+                    m = re.match(r"^/dev/(\S+)\s+on\s+", line)
+                    if m and m.group(1).lower() == clean_id.lower():
+                        return RemountResult(
+                            target=clean_id,
+                            success=True,
+                            message=f"Volume {clean_id} mounted successfully.",
+                        )
+            except Exception:
+                pass
+            return RemountResult(
+                target=clean_id,
+                success=False,
+                message=f"Failed to mount {clean_id}: {proc.stderr.strip() or output}",
+            )
         except subprocess.TimeoutExpired:
             return RemountResult(
-                target=volume_id,
+                target=clean_id,
                 success=False,
-                message=f"Mount timed out for {volume_id}",
+                message=f"Mount timed out for {clean_id}",
             )
 
     def get_blocking_processes(self, mount_point: str) -> List[ProcessLockInfo]:

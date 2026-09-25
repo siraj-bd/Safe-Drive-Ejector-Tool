@@ -21,7 +21,7 @@ def handle_json_status():
     """Output machine-readable JSON status of connected drives and configuration."""
     engine = SafeEjectEngine()
     ext_drives = engine.get_external_drives()
-    managed_drives = engine.get_managed_drives()
+    managed_drives = [d for d in ext_drives if d.is_managed]
 
     # Calculate actual real-time ejected/unmounted count
     ejected_count = 0
@@ -67,11 +67,12 @@ def handle_json_status():
             except Exception:
                 pass
 
+    bottom_status = engine.idle_monitor.get_status_summary(managed_drives)
     data = {
         "platform": sys.platform,
         "config": engine.config.to_dict(),
         "sleep_timer_label": engine.config.sleep_timer_label,
-        "bottom_status": engine.get_bottom_status(),
+        "bottom_status": bottom_status,
         "ejected_state": state,
         "ejected_count": ejected_count,
         "external_drives": [d.to_dict() for d in ext_drives],

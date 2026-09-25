@@ -68,6 +68,11 @@ class SafeEjectEngine:
         success = any(r.success for r in results)
         if success:
             StateManager.clear_ejected_drives()
+            if targets:
+                for t in targets:
+                    self.idle_monitor.mark_drive_awake(t)
+            else:
+                self.idle_monitor.sleeping_drive_ids.clear()
             self.volume_manager.play_sound(self.config.success_sound)
         else:
             self.volume_manager.play_sound(self.config.failure_sound)

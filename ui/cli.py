@@ -282,7 +282,7 @@ def cmd_eject_now(engine: SafeEjectEngine, args):
     targets = getattr(args, "targets", None)
     if targets:
         print(f"\n[Eject Now] Ejecting/unmounting {len(targets)} selected target(s): {', '.join(targets)}")
-        results = engine.eject_targets(targets)
+        results = engine.eject_now(targets=targets)
         success_count = sum(1 for r in results if r.success)
         for res in results:
             icon = _status_icon(res.success)

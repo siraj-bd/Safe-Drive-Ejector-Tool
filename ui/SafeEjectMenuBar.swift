@@ -705,7 +705,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                     task.terminate()
                 }
             }
-            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 4.0, execute: watchdog)
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 15.0, execute: watchdog)
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
@@ -774,7 +774,9 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
             var errMsg = ""
             if !success {
                 let rawErr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                errMsg = rawErr.replacingOccurrences(of: "\n", with: " ")
+                let lines = rawErr.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                let cleanErr = lines.last ?? rawErr
+                errMsg = cleanErr.replacingOccurrences(of: "\n", with: " ")
                     .replacingOccurrences(of: "'", with: "\\'")
                     .replacingOccurrences(of: "\"", with: "\\\"")
             }
@@ -783,10 +785,10 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     self.isOperationInProgress = false
                     self.syncRealDriveState()
-                }
-                if !isBackground {
-                    let finishJs = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success), '\(errMsg)'); }"
-                    self.webView.evaluateJavaScript(finishJs, completionHandler: nil)
+                    if !isBackground {
+                        let finishJs = "if(window.onOperationComplete){ window.onOperationComplete('\(cmd)', \(success), '\(errMsg)'); }"
+                        self.webView.evaluateJavaScript(finishJs, completionHandler: nil)
+                    }
                 }
             }
         }
