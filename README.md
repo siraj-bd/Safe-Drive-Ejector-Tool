@@ -62,15 +62,64 @@ Have you ever closed your MacBook lid or let your PC go to sleep, only to wake u
 
 ---
 
-## Installation
+## Installation & First-Time Launch
 
-### 1. Clone the Repository
+### Option A: Pre-Built Standalone Release (Recommended)
+
+Download the latest standalone package for your operating system from [GitHub Releases](https://github.com/siraj-bd/Safe-Drive-Ejector-Tool/releases):
+- **macOS Apple Silicon**: `SafeDriveEjector-1.0.0-macOS-arm64.dmg`
+- **macOS Intel**: `SafeDriveEjector-1.0.0-macOS-x86_64.dmg`
+- **Windows x64**: `SafeDriveEjector-1.0.0-Windows.zip`
+
+---
+
+#### 🍎 macOS First-Launch Guide (Gatekeeper)
+
+Safe Drive Ejector Tool is a 100% free, community-driven open-source utility. Because it is distributed directly on GitHub without a paid $99/year Apple Developer account, macOS Gatekeeper presents a standard security verification alert on your very first run:
+
+> **"Safe Drive Ejector" Not Opened**  
+> *Apple could not verify "Safe Drive Ejector" is free of malware that may harm your Mac or compromise your privacy.*
+
+This is completely normal for community open-source software. You **do not** need to disable Gatekeeper globally or weaken system security.
+
+**To Launch the Application (One-Time Setup):**
+
+* **Method 1: Via System Settings (Recommended)**
+  1. Open the downloaded `.dmg` and drag **Safe Drive Ejector.app** into your **Applications** folder.
+  2. Double-click **Safe Drive Ejector.app**. When the warning dialog appears, click **Done**.
+  3. Open **System Settings** (Apple Menu  > System Settings).
+  4. Navigate to **Privacy & Security** and scroll down to the **Security** section.
+  5. You will see: *"Safe Drive Ejector was blocked to protect your Mac."*
+  6. Click **Open Anyway**, enter your Mac password or use Touch ID, and click **Open**.
+
+* **Method 2: Via Terminal (One Command)**
+  Clear the browser download quarantine attribute directly:
+  ```bash
+  xattr -d com.apple.quarantine "/Applications/Safe Drive Ejector.app"
+  ```
+  The app will now launch immediately from Applications, Spotlight, or your top status bar on every boot!
+
+---
+
+#### 🪟 Windows First-Launch Guide (SmartScreen)
+
+1. Download and extract `SafeDriveEjector-1.0.0-Windows.zip`.
+2. Double-click `install.bat` to install to local programs, create a Startup shortcut, and configure sleep/wake hooks.
+3. If Microsoft Defender SmartScreen displays *"Windows protected your PC"*:
+   - Click **More info**.
+   - Click **Run anyway**.
+
+---
+
+### Option B: Build From Source
+
+#### 1. Clone the Repository
 ```bash
 git clone https://github.com/siraj-bd/Safe-Drive-Ejector-Tool.git
 cd Safe-Drive-Ejector-Tool
 ```
 
-### 2. Requirements
+#### 2. Requirements
 - **macOS**: macOS 12.0 or later, Python 3.9+, and Xcode Command Line Tools (`xcode-select --install`).
 - **Windows**: Windows 10/11 with Python 3.9+ and PowerShell 5.1+.
 

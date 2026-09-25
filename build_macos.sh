@@ -13,7 +13,7 @@ BUILD_DIR="$DIR/.build"
 DIST_DIR="$DIR/dist"
 APP_NAME="Safe Drive Ejector"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
-ARCH="$(uname -m)"
+ARCH="${ARCH:-$(uname -m)}"
 DMG_NAME="${DMG_NAME:-SafeDriveEjector-1.0.0-macOS-${ARCH}.dmg}"
 DMG_OUTPUT="$DIST_DIR/$DMG_NAME"
 
@@ -163,6 +163,9 @@ cp -R "$APP_BUNDLE" "$DMG_STAGE/"
 ln -s /Applications "$DMG_STAGE/Applications"
 if [ -f "assets/AppIcon.icns" ]; then
     cp "assets/AppIcon.icns" "$DMG_STAGE/.VolumeIcon.icns"
+fi
+if [ -f "FIRST_LAUNCH_INSTRUCTIONS.txt" ]; then
+    cp "FIRST_LAUNCH_INSTRUCTIONS.txt" "$DMG_STAGE/FIRST_LAUNCH_INSTRUCTIONS.txt"
 fi
 
 rm -f "$DMG_OUTPUT"

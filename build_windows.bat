@@ -49,6 +49,7 @@ copy "%ROOT_DIR%install\windows\uninstall_release.bat" "%DIST_DIR%\SafeDriveEjec
 copy "%ROOT_DIR%install\windows\register_task.ps1" "%DIST_DIR%\SafeDriveEjector\register_task.ps1" >nul
 copy "%ROOT_DIR%LICENSE" "%DIST_DIR%\SafeDriveEjector\LICENSE" >nul
 copy "%ROOT_DIR%README.md" "%DIST_DIR%\SafeDriveEjector\README.md" >nul
+if exist "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" copy "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" "%DIST_DIR%\SafeDriveEjector\FIRST_LAUNCH_INSTRUCTIONS.txt" >nul
 
 REM 5. Create Standalone ZIP Archive for Distribution
 echo [5/5] Creating distribution archive SafeDriveEjector-1.0.0-Windows.zip...

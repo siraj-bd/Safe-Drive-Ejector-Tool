@@ -158,3 +158,24 @@ Exit Code: 0 (Zero warnings, zero errors)
 - **AST Re-Audit**: 0 unused imports across all production and test Python files.
 - **Unit Test Suite**: 49/49 tests pass in 0.14s (43 core/feature tests + 6 deep sleep isolation tests).
 - **Swift Compilation**: `swiftc -parse ui/SafeEjectMenuBar.swift` passes with exit code 0.
+
+---
+
+## 5. Free Open-Source GitHub Distribution Architecture
+
+### Strategy & Multi-Platform Support
+- **100% Free Open-Source Model**: No paid Apple Developer Program ($99/year) or commercial Windows EV code signing certificate required.
+- **Supported Targets**:
+  1. **macOS Apple Silicon (`arm64`)**: Native `.app` bundle, frozen standalone Python core engine, WebKit card UI, packaged in `.dmg`.
+  2. **macOS Intel (`x86_64`)**: Native build via GitHub Actions `macos-15-intel` runner, identical `.app` and `.dmg`.
+  3. **Windows (`x64`)**: Native standalone `.exe` (windowless System Tray GUI + CLI), packaged with non-admin installer/uninstaller in `.zip`.
+
+### Code Signing & Security
+- **Inside-Out Ad-Hoc Signing**: Bundle sealed properly (`codesign --verify --deep --strict` returns exit code 0) with `entitlements.plist`.
+- **First-Launch Guidance (`FIRST_LAUNCH_INSTRUCTIONS.txt`)**:
+  - Bundled directly inside macOS `.dmg` and Windows `.zip`.
+  - Detailed in `README.md`.
+  - macOS Gatekeeper: Approved via *System Settings > Privacy & Security > Open Anyway* (or `xattr -d com.apple.quarantine`).
+  - Windows SmartScreen: Approved via *More info > Run anyway*.
+  - **No Global Security Compromises**: SIP and Gatekeeper remain fully enabled.
+
