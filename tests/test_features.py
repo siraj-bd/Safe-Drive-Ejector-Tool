@@ -864,6 +864,83 @@ class TestFunctionalFeatures(unittest.TestCase):
             ]
             self.assertEqual(len(info_calls), 0, "diskutil info must NEVER be called on sleeping parent disk7")
 
+    def test_set_sleep_selection_and_set_all(self):
+        """Verify set_sleep_selection and set_all_sleep_selections correctly update config."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", uuid="UUID-VOL1", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", uuid="UUID-VOL2", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # 1. Set only vol2
+        is_sel, msg = engine.set_all_sleep_selections(["disk9s1"])
+        self.assertTrue(is_sel)
+        self.assertEqual(config.selected_sleep_drive_uuids, ["UUID-VOL2"])
+        self.assertTrue(config.is_drive_sleep_selected("UUID-VOL2", "disk9s1"))
+        self.assertFalse(config.is_drive_sleep_selected("UUID-VOL1", "disk8s1"))
+        self.assertFalse(config.is_drive_sleep_selected("UUID-PARENT", "disk7"))
+
+        # 2. Set __none__ (all unchecked)
+        is_sel, msg = engine.set_all_sleep_selections(["__none__"])
+        self.assertTrue(is_sel)
+        self.assertEqual(config.selected_sleep_drive_uuids, ["__none__"])
+        self.assertFalse(config.is_drive_sleep_selected("UUID-VOL2", "disk9s1"))
+        self.assertFalse(config.is_drive_sleep_selected("UUID-PARENT", "disk7"))
+
+        # 3. Explicit set_sleep_selection on/off
+        is_sel, msg = engine.set_sleep_selection("disk8s1", True)
+        self.assertTrue(is_sel)
+        self.assertIn("UUID-VOL1", config.selected_sleep_drive_uuids)
+
+        is_sel, msg = engine.set_sleep_selection("disk8s1", False)
+        self.assertFalse(is_sel)
+        self.assertNotIn("UUID-VOL1", config.selected_sleep_drive_uuids)
+
+    def test_eject_targets_does_not_register_touch_wake(self):
+        """Verify manual unmount/eject via eject_targets purges from idle_monitor instead of queuing touch-wake."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", uuid="UUID-VOL1", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False)
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Pre-seed sleeping_drive_ids
+        engine.idle_monitor.mark_drive_asleep("disk8s1")
+        self.assertIn("disk8s1", engine.idle_monitor.sleeping_drive_ids)
+
+        # Manually unmount disk8s1
+        results = engine.eject_targets(["disk8s1"])
+        self.assertTrue(results[0].success)
+
+        # Must be purged from sleeping_drive_ids so mouse movement does not auto-remount
+        self.assertNotIn("disk8s1", engine.idle_monitor.sleeping_drive_ids)
+
+    def test_child_partition_selective_idle_sleep(self):
+        """Verify that selecting only a child volume leaves the parent and sibling partitions untouched."""
+        adapter = FeatureMockAdapter()
+        vol1 = VolumeInfo(device_id="disk8s1", name="support-external-drive", uuid="UUID-VOL1", is_mounted=True)
+        vol2 = VolumeInfo(device_id="disk9s1", name="Macbook Backup", uuid="UUID-VOL2", is_mounted=True)
+        drive = DriveInfo(id="disk7", name="StoreJet Transcend", is_external=True, volumes=[vol1, vol2])
+        adapter.drives = [drive]
+
+        config = SafeEjectConfig(show_notifications=False, selected_sleep_drive_uuids=["UUID-VOL2"])
+        engine = SafeEjectEngine(config=config, adapter=adapter)
+
+        # Trigger idle sleep
+        results = engine._on_idle_sleep([])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].target, "disk9s1")
+        self.assertTrue(results[0].success)
+
+        # vol2 should be unmounted, vol1 must NOT be unmounted
+        self.assertIn("disk9s1", adapter.unmounted_volumes)
+        self.assertNotIn("disk8s1", adapter.unmounted_volumes)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -263,6 +263,75 @@ class SafeEjectEngine:
             return True
         return False
 
+    def set_sleep_selection(self, target: str, selected: bool) -> Tuple[bool, str]:
+        """Explicitly enable or disable individual SSD/partition selection for auto-sleep."""
+        drives = self.get_external_drives()
+        clean_target = target.strip().replace("/dev/", "").lower()
+        target_uuid = target
+        found = False
+
+        # 1. Match parent drive ID or primary UUID
+        for d in drives:
+            d_clean = d.id.replace("/dev/", "").lower()
+            if d_clean == clean_target or (d.primary_uuid and d.primary_uuid.lower() == clean_target):
+                target_uuid = d.primary_uuid or d_clean
+                found = True
+                break
+
+        # 2. If not matched, match child volume
+        if not found:
+            for d in drives:
+                for v in d.volumes:
+                    v_clean = v.device_id.replace("/dev/", "").lower()
+                    if (
+                        v_clean == clean_target
+                        or (v.name and v.name.lower() == clean_target)
+                        or (v.uuid and v.uuid.lower() == clean_target)
+                    ):
+                        target_uuid = v.uuid or v_clean
+                        found = True
+                        break
+                if found:
+                    break
+
+        is_sel = self.config.set_drive_sleep_selected(target_uuid, selected)
+        msg = f"Drive '{target}' auto-sleep: {'Enabled' if is_sel else 'Disabled'}."
+        return is_sel, msg
+
+    def set_all_sleep_selections(self, targets: List[str]) -> Tuple[bool, str]:
+        """Sets the exact list of targets (parent drives and/or child partitions) for auto-sleep."""
+        clean_targets = []
+        drives = self.get_external_drives()
+        for t in targets:
+            if not t or t == "__none__":
+                continue
+            t_clean = t.strip().replace("/dev/", "").lower()
+            resolved = False
+            for d in drives:
+                d_clean = d.id.replace("/dev/", "").lower()
+                if d_clean == t_clean or (d.primary_uuid and d.primary_uuid.lower() == t_clean):
+                    clean_targets.append(d.primary_uuid or d.id.replace("/dev/", ""))
+                    resolved = True
+                    break
+                for v in d.volumes:
+                    v_clean = v.device_id.replace("/dev/", "").lower()
+                    if (
+                        v_clean == t_clean
+                        or (v.name and v.name.lower() == t_clean)
+                        or (v.uuid and v.uuid.lower() == t_clean)
+                    ):
+                        clean_targets.append(v.uuid or v.device_id.replace("/dev/", ""))
+                        resolved = True
+                        break
+                if resolved:
+                    break
+            if not resolved:
+                clean_targets.append(t.strip().replace("/dev/", ""))
+
+        self.config.set_selected_sleep_drives(clean_targets if clean_targets or targets else ["__none__"])
+        msg = f"Auto-sleep targets updated: {clean_targets if clean_targets else 'None'}"
+        return True, msg
+
     def toggle_sleep_selection(self, target: str) -> Tuple[bool, str]:
         """Toggle individual SSD selection for auto-sleep."""
         drives = self.get_external_drives()
@@ -338,9 +407,9 @@ class SafeEjectEngine:
                 res = self.volume_manager.deep_sleep_drive(d.id)
                 results.append(res)
                 if res.success:
-                    self.idle_monitor.mark_drive_asleep(d.id)
+                    self.idle_monitor.mark_drive_awake(d.id)
                     for v in d.volumes:
-                        self.idle_monitor.mark_drive_asleep(v.device_id)
+                        self.idle_monitor.mark_drive_awake(v.device_id)
                 handled_targets.add(d_id)
                 if d.primary_uuid:
                     handled_targets.add(d.primary_uuid)
@@ -360,7 +429,7 @@ class SafeEjectEngine:
             res = self.volume_manager.unmount_target(t)
             results.append(res)
             if res.success:
-                self.idle_monitor.mark_drive_asleep(t)
+                self.idle_monitor.mark_drive_awake(t)
             handled_targets.add(t)
 
         success = any(r.success for r in results)

@@ -2258,7 +2258,14 @@
 
       syncAllCheckboxState();
       const targetId = drive ? (drive.id ? drive.id.replace(/^\/dev\//, '') : drive.uuid || drive.name) : `disk${slotNum}`;
-      postToHost({ action: "driveSelection", driverId: targetId, slot: slotNum, checked: isNowChecked });
+      const checkedTargets = getCheckedDriveTargets();
+      postToHost({
+        action: "driveSelection",
+        driverId: targetId,
+        slot: slotNum,
+        checked: isNowChecked,
+        targets: checkedTargets
+      });
     }
 
     function toggleAllCheckbox() {
@@ -2279,7 +2286,13 @@
           else cb.classList.add("unchecked");
         }
       }
-      postToHost({ action: "driveSelectionAll", checked: isAllChecked });
+      const checkedTargets = getCheckedDriveTargets();
+      postToHost({
+        action: "driveSelection",
+        driverId: "all",
+        checked: isAllChecked,
+        targets: checkedTargets
+      });
     }
 
     function syncAllCheckboxState() {

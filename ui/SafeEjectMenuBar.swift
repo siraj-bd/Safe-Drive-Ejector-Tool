@@ -628,8 +628,18 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
                 }
             }
         case "driveSelection":
-            if let driverId = body["driverId"] as? String {
-                runCLICommand(["select-sleep", driverId])
+            if let targets = body["targets"] as? [String] {
+                if targets.isEmpty {
+                    runCLICommand(["select-sleep", "--set", "__none__"])
+                } else {
+                    runCLICommand(["select-sleep", "--set"] + targets)
+                }
+            } else if let driverId = body["driverId"] as? String {
+                if let checked = body["checked"] as? Bool {
+                    runCLICommand(["select-sleep", driverId, checked ? "true" : "false"])
+                } else {
+                    runCLICommand(["select-sleep", driverId])
+                }
             }
         case "openURL":
             if let urlStr = body["url"] as? String, let url = URL(string: urlStr) {

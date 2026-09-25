@@ -354,8 +354,17 @@ def cmd_wake_mode(engine: SafeEjectEngine, args):
 
 
 def cmd_select_sleep(engine: SafeEjectEngine, args):
-    """Choose which individual SSD goes to sleep when Mac is idle."""
-    if not args.target:
+    """Choose which individual SSD/partition goes to sleep when Mac is idle."""
+    if getattr(args, "set_targets", None) is not None:
+        targets = args.set_targets
+        is_sel, msg = engine.set_all_sleep_selections(targets)
+        print(f"\n{msg}\n")
+        return
+
+    target = getattr(args, "target", None)
+    extra = getattr(args, "extra", []) or []
+
+    if not target:
         selected = engine.get_sleep_selected_drives()
         print(f"\nSSDs Chosen for Auto-Sleep ({len(selected)}):")
         for d in selected:
@@ -363,7 +372,13 @@ def cmd_select_sleep(engine: SafeEjectEngine, args):
         print("\nTo toggle an SSD: ./main.py select-sleep <disk_id_or_uuid>\n")
         return
 
-    is_sel, msg = engine.toggle_sleep_selection(args.target)
+    if extra and extra[0].lower() in ("true", "false", "1", "0", "yes", "no"):
+        is_enabled = extra[0].lower() in ("true", "1", "yes")
+        is_sel, msg = engine.set_sleep_selection(target, is_enabled)
+        print(f"\n{msg}\n")
+        return
+
+    is_sel, msg = engine.toggle_sleep_selection(target)
     print(f"\n{msg}\n")
 
 
@@ -536,7 +551,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # select-sleep <target>
     p_select_sleep = subparsers.add_parser("select-sleep", help="Individually choose which SSD sleeps on idle")
-    p_select_sleep.add_argument("target", nargs="?", help="Disk identifier or UUID to toggle")
+    p_select_sleep.add_argument("--set", dest="set_targets", nargs="*", help="Set exact list of selected sleep targets")
+    p_select_sleep.add_argument("target", nargs="?", help="Disk identifier or UUID to toggle or set")
+    p_select_sleep.add_argument("extra", nargs="*", help="Additional targets or boolean state")
 
     # daemon
     subparsers.add_parser("daemon", help="Run the sleep/wake listener daemon in foreground")

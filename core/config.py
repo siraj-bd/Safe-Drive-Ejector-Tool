@@ -144,10 +144,12 @@ class SafeEjectConfig:
             return f"{hours} Hour{'s' if hours > 1 else ''}"
 
     def is_drive_sleep_selected(self, uuid: str, drive_id: str = "") -> bool:
-        """Check if an individual SSD is selected for sleep."""
+        """Check if an individual SSD/partition is selected for sleep."""
         if not self.selected_sleep_drive_uuids:
             # If none explicitly selected, select all managed drives
             return self.is_drive_managed(uuid, drive_id)
+        if self.selected_sleep_drive_uuids == ["__none__"]:
+            return False
         clean_uuid = (uuid or "").strip().lower()
         clean_drive_id = (drive_id or "").replace("/dev/", "").strip().lower()
         for s in self.selected_sleep_drive_uuids:
@@ -156,14 +158,51 @@ class SafeEjectConfig:
                 return True
         return False
 
+    def set_drive_sleep_selected(self, uuid: str, selected: bool) -> bool:
+        """Explicitly set an individual drive or volume sleep selection."""
+        clean_uuid = uuid.strip()
+        if not clean_uuid:
+            return False
+        if self.selected_sleep_drive_uuids == ["__none__"]:
+            self.selected_sleep_drive_uuids = []
+
+        found_idx = -1
+        for idx, s in enumerate(self.selected_sleep_drive_uuids):
+            if s.lower() == clean_uuid.lower():
+                found_idx = idx
+                break
+
+        if selected:
+            if found_idx == -1:
+                self.selected_sleep_drive_uuids.append(clean_uuid)
+                self.save()
+            return True
+        else:
+            if found_idx != -1:
+                self.selected_sleep_drive_uuids.pop(found_idx)
+                if not self.selected_sleep_drive_uuids:
+                    self.selected_sleep_drive_uuids = ["__none__"]
+                self.save()
+            return False
+
+    def set_selected_sleep_drives(self, targets: List[str]) -> None:
+        """Set exact list of targets selected for sleep."""
+        cleaned = [t.strip() for t in targets if t and t.strip() and t.strip() != "__none__"]
+        self.selected_sleep_drive_uuids = cleaned if cleaned else ["__none__"]
+        self.save()
+
     def toggle_sleep_drive_selection(self, uuid: str) -> bool:
         """Toggle individual SSD selection for auto-sleep."""
         clean_uuid = uuid.strip()
         if not clean_uuid:
             return False
+        if self.selected_sleep_drive_uuids == ["__none__"]:
+            self.selected_sleep_drive_uuids = []
         for idx, s in enumerate(self.selected_sleep_drive_uuids):
             if s.lower() == clean_uuid.lower():
                 self.selected_sleep_drive_uuids.pop(idx)
+                if not self.selected_sleep_drive_uuids:
+                    self.selected_sleep_drive_uuids = ["__none__"]
                 self.save()
                 return False
         self.selected_sleep_drive_uuids.append(clean_uuid)
