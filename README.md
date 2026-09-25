@@ -34,8 +34,8 @@ Have you ever closed your MacBook lid or let your PC go to sleep, only to wake u
 
 - **Safe Ejection Before Sleep & Logout**:
   Cleanly flushes write buffers and unmounts all managed external volumes before the computer sleeps, screens turn off, or users log out.
-- **Smart Auto-Awake & Remount**:
-  Automatically detects system wake or peripheral reconnection and remounts your storage volumes instantly.
+- **Hardware Deep Sleep & Silence**:
+  Puts external disks and USB bridges into true SATA slumber (LED off) with zero background wake polling or false touch triggers.
 - **Native macOS Menu Bar App**:
   Built with Swift and modern glassmorphic web standards. Features a compact, floating, borderless card anchored to your top status bar with zero background bleed.
 - **Natural BSD Name Sorting**:
@@ -134,7 +134,7 @@ The floating menu bar card provides full control over your storage environment:
 | [ ] disk4                 [ Mount ] [ Unmount]|
 | [ ] All                   [ Mount ] [ Unmount]|
 +-----------------------------------------------+
-|  (⏰) Sleep [ 5m ]         (🌙) Awake     [ ]  |
+|  (⏰) Sleep [ 2m ]        (🌙) Deep Sleep [✓]  |
 |  ( ) Ejected [ 0 ]         (▲) Eject Now      |
 |  (✓) Start At Login        (↻) Update         |
 |  (✓) Before Sleep          (ℹ) About          |
@@ -147,7 +147,7 @@ The floating menu bar card provides full control over your storage environment:
 - **Top Bar**: Direct link to the repository with real-time star counters.
 - **Pager Zone**: Large, bold quadrant buttons (`1st`, `2nd`, `3rd`, `4th`) that expand and cycle through your disk pages.
 - **Drive Rows**: Direct BSD name labels with custom red checkboxes and one-click Mount/Unmount buttons.
-- **Controls**: Easy toggles for auto-awake, login launching, sleep triggers, and an emergency eject button.
+- **Controls**: Easy toggles for deep sleep, login launching, sleep triggers, and an emergency eject button.
 
 ---
 
@@ -163,7 +163,7 @@ Example configuration:
   "start_at_login": true,
   "eject_before_sleep": true,
   "eject_before_logout": false,
-  "auto_awake": true,
+  "deep_sleep_mode": true,
   "wake_mode": "touch",
   "sleep_timer_seconds": 120,
   "unmount_instead_of_eject": true,
