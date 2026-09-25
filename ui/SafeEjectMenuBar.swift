@@ -17,6 +17,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     var webView: WKWebView!
     var pythonPath = "/usr/bin/python3"
     var scriptPath = ""
+    var bundledEnginePath: String? = nil
     var htmlCardPath = ""
     var globalClickMonitor: Any?
     var livePollingTimer: Timer?
@@ -69,6 +70,30 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         let bundleURL = URL(fileURLWithPath: bundlePath).resolvingSymlinksInPath()
         potentialRoots.append(bundleURL.path)
         potentialRoots.append(bundleURL.deletingLastPathComponent().path)
+
+        // 5. Detect bundled standalone Python engine (safeeject_core)
+        var engineCandidates: [String] = []
+        if let execPath = CommandLine.arguments.first ?? Bundle.main.executablePath, !execPath.isEmpty {
+            let execURL = URL(fileURLWithPath: execPath).resolvingSymlinksInPath()
+            let execDir = execURL.deletingLastPathComponent().path
+            engineCandidates.append((execDir as NSString).appendingPathComponent("safeeject_core"))
+        }
+        if let bundleExecURL = Bundle.main.executableURL {
+            let bundleMacOS = bundleExecURL.deletingLastPathComponent().path
+            engineCandidates.append((bundleMacOS as NSString).appendingPathComponent("safeeject_core"))
+        }
+        for candidate in potentialRoots {
+            engineCandidates.append((candidate as NSString).appendingPathComponent("safeeject_core"))
+            engineCandidates.append((candidate as NSString).appendingPathComponent("bin/safeeject_core"))
+            engineCandidates.append((candidate as NSString).appendingPathComponent(".build/dist/safeeject_core"))
+        }
+        for path in engineCandidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                bundledEnginePath = path
+                NSLog("SafeEjectMenuBar: Discovered bundled standalone engine at \(path)")
+                break
+            }
+        }
 
         // Find root where main.py exists
         var foundRoot: String?
@@ -297,8 +322,13 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
         if beforeLogoutEnabled {
             // Synchronously unmount drives so OS does not shut down before completion
             let task = Process()
-            task.launchPath = self.pythonPath
-            task.arguments = [self.scriptPath, "idle-sleep"]
+            if let engine = self.bundledEnginePath {
+                task.launchPath = engine
+                task.arguments = ["idle-sleep"]
+            } else {
+                task.launchPath = self.pythonPath
+                task.arguments = [self.scriptPath, "idle-sleep"]
+            }
             try? task.run()
             task.waitUntilExit()
         }
@@ -307,8 +337,13 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     @objc func handleAppWillTerminate(_ notification: Notification) {
         if beforeLogoutEnabled {
             let task = Process()
-            task.launchPath = self.pythonPath
-            task.arguments = [self.scriptPath, "idle-sleep"]
+            if let engine = self.bundledEnginePath {
+                task.launchPath = engine
+                task.arguments = ["idle-sleep"]
+            } else {
+                task.launchPath = self.pythonPath
+                task.arguments = [self.scriptPath, "idle-sleep"]
+            }
             try? task.run()
             task.waitUntilExit()
         }
@@ -642,13 +677,18 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     }
 
     func queryStatusJSON() -> [String: Any] {
-        guard !scriptPath.isEmpty else { return [:] }
+        guard bundledEnginePath != nil || !scriptPath.isEmpty else { return [:] }
         let task = Process()
-        task.launchPath = pythonPath
-        task.arguments = [scriptPath, "json-status"]
+        if let engine = bundledEnginePath {
+            task.launchPath = engine
+            task.arguments = ["json-status"]
+        } else {
+            task.launchPath = pythonPath
+            task.arguments = [scriptPath, "json-status"]
+        }
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        let projectDir = (scriptPath as NSString).deletingLastPathComponent
+        let projectDir = !scriptPath.isEmpty ? (scriptPath as NSString).deletingLastPathComponent : FileManager.default.currentDirectoryPath
         env["PYTHONPATH"] = projectDir
         task.environment = env
         task.currentDirectoryPath = projectDir
@@ -681,7 +721,7 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
     }
 
     func runCLICommand(_ args: [String], isBackground: Bool = false) {
-        guard !scriptPath.isEmpty else { return }
+        guard bundledEnginePath != nil || !scriptPath.isEmpty else { return }
         let cmd = args.first ?? ""
         let targetParam = args.dropFirst().joined(separator: ", ")
 
@@ -701,11 +741,16 @@ class SafeEjectStatusItemManager: NSObject, WKScriptMessageHandler, NSWindowDele
 
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
-            task.launchPath = self.pythonPath
-            task.arguments = [self.scriptPath] + args
+            if let engine = self.bundledEnginePath {
+                task.launchPath = engine
+                task.arguments = args
+            } else {
+                task.launchPath = self.pythonPath
+                task.arguments = [self.scriptPath] + args
+            }
             var env = ProcessInfo.processInfo.environment
             env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-            let projectDir = (self.scriptPath as NSString).deletingLastPathComponent
+            let projectDir = !self.scriptPath.isEmpty ? (self.scriptPath as NSString).deletingLastPathComponent : FileManager.default.currentDirectoryPath
             env["PYTHONPATH"] = projectDir
             task.environment = env
             task.currentDirectoryPath = projectDir

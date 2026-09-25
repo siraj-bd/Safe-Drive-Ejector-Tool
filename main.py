@@ -86,6 +86,10 @@ def main():
         run_tray()
     elif len(sys.argv) > 1 and sys.argv[1] == "json-status":
         handle_json_status()
+    elif sys.platform == "win32" and len(sys.argv) == 1:
+        # On Windows, launching the main executable with no arguments starts the System Tray app
+        from ui.tray import run_tray
+        run_tray()
     else:
         # Default to CLI
         from ui.cli import main as cli_main

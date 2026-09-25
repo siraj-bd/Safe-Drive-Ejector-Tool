@@ -792,6 +792,10 @@ class TestFunctionalFeatures(unittest.TestCase):
 
     def test_macos_adapter_hardware_silence_gates(self):
         """Verify MacOSAdapter suppresses diskutil list when all external drives sleep and never queries diskutil info."""
+        import sys
+        if sys.platform != "darwin":
+            self.skipTest("MacOSAdapter tests require macOS platform")
+
         from platform_adapters.macos import (
             MacOSAdapter,
             _save_hardware_cache,
