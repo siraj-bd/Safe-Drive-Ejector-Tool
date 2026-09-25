@@ -67,9 +67,8 @@ Have you ever closed your MacBook lid or let your PC go to sleep, only to wake u
 ### Option A: Pre-Built Standalone Release (Recommended)
 
 Download the latest standalone package for your operating system from [GitHub Releases](https://github.com/siraj-bd/Safe-Drive-Ejector-Tool/releases):
-- **macOS Apple Silicon**: `SafeDriveEjector-1.0.0-macOS-arm64.dmg`
-- **macOS Intel**: `SafeDriveEjector-1.0.0-macOS-x86_64.dmg`
-- **Windows x64**: `SafeDriveEjector-1.0.0-Windows.zip`
+- **macOS Universal (Apple Silicon & Intel)**: `SafeDriveEjector-1.0.1-macOS-Universal.dmg`
+- **Windows x64**: `SafeDriveEjector-1.0.1-windows-x64.zip`
 
 ---
 
@@ -103,7 +102,7 @@ This is completely normal for community open-source software. You **do not** nee
 
 #### 🪟 Windows First-Launch Guide (SmartScreen)
 
-1. Download and extract `SafeDriveEjector-1.0.0-Windows.zip`.
+1. Download and extract `SafeDriveEjector-1.0.1-windows-x64.zip`.
 2. Double-click `install.bat` to install to local programs, create a Startup shortcut, and configure sleep/wake hooks.
 3. If Microsoft Defender SmartScreen displays *"Windows protected your PC"*:
    - Click **More info**.

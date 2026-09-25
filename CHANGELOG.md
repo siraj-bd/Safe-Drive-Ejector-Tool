@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-09-25
+
+### Added
+- **Universal 2 macOS Architecture (`arm64` + `x86_64`)**:
+  - Consolidated separate Apple Silicon and Intel macOS packages into a single `SafeDriveEjector-1.0.1-macOS-Universal.dmg`.
+  - Mach-O fat binary packaging for `SafeEjectMenuBar` (Swift) and Universal dispatcher for `safeeject_core` (Python engine).
+  - Native execution on both Apple Silicon (M1/M2/M3/M4) and Intel (x86_64) without requiring Rosetta 2.
+  - Inside-out ad-hoc code signing with strict bundle seal verification.
+
+### Changed
+- Standardized Windows distribution archive asset name to `SafeDriveEjector-1.0.1-windows-x64.zip`.
+- Excluded internal tracking documentation (`project-execution-status.md`, `project-status-for-chatgpt.html`) from repository tracking via `.gitignore`.
+
 ## [1.0.0] - 2026-09-22
 
 ### Added

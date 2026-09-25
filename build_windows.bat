@@ -52,13 +52,14 @@ copy "%ROOT_DIR%README.md" "%DIST_DIR%\SafeDriveEjector\README.md" >nul
 if exist "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" copy "%ROOT_DIR%FIRST_LAUNCH_INSTRUCTIONS.txt" "%DIST_DIR%\SafeDriveEjector\FIRST_LAUNCH_INSTRUCTIONS.txt" >nul
 
 REM 5. Create Standalone ZIP Archive for Distribution
-echo [5/5] Creating distribution archive SafeDriveEjector-1.0.0-Windows.zip...
-powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\SafeDriveEjector' -DestinationPath '%ROOT_DIR%dist\SafeDriveEjector-1.0.0-Windows.zip' -Force" 2>nul
+if not defined ZIP_NAME set "ZIP_NAME=SafeDriveEjector-1.0.1-windows-x64.zip"
+echo [5/5] Creating distribution archive %ZIP_NAME%...
+powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\SafeDriveEjector' -DestinationPath '%ROOT_DIR%dist\%ZIP_NAME%' -Force" 2>nul
 
 echo.
 echo =======================================================
 echo WINDOWS BUILD COMPLETED SUCCESSFULLY!
 echo Release Folder: %DIST_DIR%\SafeDriveEjector
-echo ZIP Archive:    %ROOT_DIR%dist\SafeDriveEjector-1.0.0-Windows.zip
+echo ZIP Archive:    %ROOT_DIR%dist\%ZIP_NAME%
 echo =======================================================
 if not defined CI pause

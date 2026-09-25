@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, macos-15-intel, windows-latest]
         python-version: ['3.11']
 
     steps:
@@ -55,10 +55,10 @@ jobs:
           python -m unittest tests.test_deep_sleep_auto_wake_isolation
 
   # ============================================================================
-  # 2. Build macOS Standalone App & DMG (arm64 & x86_64)
+  # 2. Build macOS Slices (arm64 & x86_64)
   # ============================================================================
-  build-macos:
-    name: Build macOS (${{ matrix.arch }})
+  build-macos-slices:
+    name: Build macOS Slice (${{ matrix.arch }})
     needs: test
     runs-on: ${{ matrix.os }}
     strategy:
@@ -84,6 +84,49 @@ jobs:
         run: |
           python -m pip install --upgrade pip pyinstaller
 
+      - name: Compile Native Slice (${{ matrix.arch }})
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh --slice ${{ matrix.arch }}
+
+      - name: Upload Architecture Slice Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-slice-${{ matrix.arch }}
+          path: .build/slices/${{ matrix.arch }}
+          if-no-files-found: error
+
+  # ============================================================================
+  # 3. Package Universal 2 macOS Bundle & DMG (arm64 + x86_64)
+  # ============================================================================
+  package-macos-universal:
+    name: Package macOS Universal (arm64 + x86_64)
+    needs: build-macos-slices
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download arm64 Slice Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-arm64
+          path: .build/slices/arm64
+
+      - name: Download x86_64 Slice Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-x86_64
+          path: .build/slices/x86_64
+
+      - name: Verify Slices Integrity
+        run: |
+          ls -la .build/slices/arm64
+          ls -la .build/slices/x86_64
+          file .build/slices/arm64/SafeEjectMenuBar .build/slices/arm64/safeeject_core
+          file .build/slices/x86_64/SafeEjectMenuBar .build/slices/x86_64/safeeject_core
+
       - name: Set up Apple Developer ID Keychain (if configured)
         if: env.APPLE_CERTIFICATE_BASE64 != ''
         env:
@@ -106,9 +149,9 @@ jobs:
           echo "Certificates available in keychain:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Build macOS App Bundle and DMG
+      - name: Merge Universal Binaries, Sign and Build DMG
         env:
-          DMG_NAME: SafeDriveEjector-1.0.0-macOS-${{ matrix.arch }}.dmg
+          DMG_NAME: SafeDriveEjector-1.0.1-macOS-Universal.dmg
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -123,7 +166,19 @@ jobs:
             export APPLE_API_KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
           fi
           chmod +x build_macos.sh
-          ./build_macos.sh
+          ./build_macos.sh --universal
+
+      - name: Verify Universal 2 Binary & Signature Standards
+        run: |
+          echo "=== 1. Checking Mach-O Fat Headers ==="
+          lipo -info "dist/Safe Drive Ejector.app/Contents/MacOS/SafeEjectMenuBar" | grep -q "x86_64"
+          lipo -info "dist/Safe Drive Ejector.app/Contents/MacOS/SafeEjectMenuBar" | grep -q "arm64"
+          lipo -info "dist/Safe Drive Ejector.app/Contents/MacOS/safeeject_core" | grep -q "x86_64"
+          lipo -info "dist/Safe Drive Ejector.app/Contents/MacOS/safeeject_core" | grep -q "arm64"
+          echo "=== 2. Strict Codesign Verification ==="
+          codesign --verify --deep --strict "dist/Safe Drive Ejector.app"
+          echo "=== 3. DMG Verification ==="
+          test -f "dist/SafeDriveEjector-1.0.1-macOS-Universal.dmg"
 
       - name: Clean up Apple Developer ID Keychain
         if: always()
@@ -134,15 +189,15 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/private_keys" 2>/dev/null || true
 
-      - name: Upload macOS Artifacts
+      - name: Upload Universal macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SafeDriveEjector-macOS-${{ matrix.arch }}
-          path: dist/SafeDriveEjector-1.0.0-macOS-${{ matrix.arch }}.dmg
+          name: SafeDriveEjector-macOS-Universal
+          path: dist/SafeDriveEjector-1.0.1-macOS-Universal.dmg
           if-no-files-found: error
 
   # ============================================================================
-  # 3. Build Windows Standalone System Tray App & ZIP (x64)
+  # 4. Build Windows Standalone System Tray App & ZIP (x64)
   # ============================================================================
   build-windows:
     name: Build Windows (x64)
@@ -167,6 +222,8 @@ jobs:
           python -m pip install --upgrade pip pyinstaller pystray pillow
 
       - name: Build Windows Standalone Executables and Archive
+        env:
+          ZIP_NAME: SafeDriveEjector-1.0.1-windows-x64.zip
         run: |
           cmd /c build_windows.bat
 
@@ -182,15 +239,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SafeDriveEjector-Windows-x64
-          path: dist/SafeDriveEjector-1.0.0-Windows.zip
+          path: dist/SafeDriveEjector-1.0.1-windows-x64.zip
           if-no-files-found: error
 
   # ============================================================================
-  # 4. Publish Release to GitHub Releases
+  # 5. Publish Release to GitHub Releases
   # ============================================================================
   publish-release:
     name: Publish Release Assets
-    needs: [build-macos, build-windows]
+    needs: [package-macos-universal, build-windows]
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
     runs-on: ubuntu-latest
 

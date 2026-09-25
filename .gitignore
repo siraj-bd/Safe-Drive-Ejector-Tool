@@ -72,3 +72,8 @@ Thumbs.db
 *.log
 /tmp/
 scratch/
+
+# Internal Tracking & Documentation (Local Only)
+project-execution-status.md
+project-status-for-chatgpt.html
+
